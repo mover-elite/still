@@ -71,10 +71,18 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   Duration _audioPosition = Duration.zero;
   Duration _audioDuration = Duration.zero;
 
+  // Message interaction state
+  Message? _replyingToMessage;
+  final TextEditingController _textController = TextEditingController();
+  final FocusNode _textFocusNode = FocusNode();
+  Set<int> _selectedMessages = {};
+  bool _isSelectionMode = false;
+
   @override
   get init => () async {
         _audioRecorder = Record();
         _messageController.addListener(_onTextChanged);
+        _textController.addListener(_onTextChanged);
         _scrollController.addListener(_onScroll);
 
         ChatService().chatStream.listen((chat) {
@@ -529,10 +537,9 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         await FilePicker.platform.pickFiles(type: FileType.image);
 
     if (result != null) {
-      Uint8List? fileBytes = result.files.first.bytes;
       String fileName = result.files.first.name;
       print(fileName);
-      // Use fileBytes or fileName as needed
+      // Use fileName as needed
     }
     // Implement file picking for web
   }
@@ -1466,105 +1473,110 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         children: [
           if (!isSentByMe) const SizedBox(width: 10),
           Flexible(
-            child: Container(
-              constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width * 0.7,
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: isSentByMe
-                    ? const Color(0xFF18365B)
-                    : const Color(0xFF404040),
-                borderRadius: isSentByMe
-                    ? const BorderRadius.only(
-                        topLeft: Radius.circular(18),
-                        topRight: Radius.circular(18),
-                        bottomLeft: Radius.circular(18),
-                        bottomRight: Radius.circular(4),
-                      )
-                    : const BorderRadius.only(
-                        topLeft: Radius.circular(4),
-                        topRight: Radius.circular(18),
-                        bottomLeft: Radius.circular(18),
-                        bottomRight: Radius.circular(18),
-                      ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (message.isAudio)
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.play_arrow,
-                          color: Colors.white,
-                          size: 20,
+            child: GestureDetector(
+              onTapDown: (TapDownDetails details) {
+                _showMessageContextMenu(context, message, details.globalPosition);
+              },
+              child: Container(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.7,
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: isSentByMe
+                      ? const Color(0xFF18365B)
+                      : const Color(0xFF404040),
+                  borderRadius: isSentByMe
+                      ? const BorderRadius.only(
+                          topLeft: Radius.circular(18),
+                          topRight: Radius.circular(18),
+                          bottomLeft: Radius.circular(18),
+                          bottomRight: Radius.circular(4),
+                        )
+                      : const BorderRadius.only(
+                          topLeft: Radius.circular(4),
+                          topRight: Radius.circular(18),
+                          bottomLeft: Radius.circular(18),
+                          bottomRight: Radius.circular(18),
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          message.audioDuration ?? '0:00',
-                          style: const TextStyle(
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (message.isAudio)
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.play_arrow,
                             color: Colors.white,
-                            fontSize: 14,
+                            size: 20,
                           ),
-                        ),
-                      ],
-                    )
-                  else
-                    Text(
-                      message.type == "TEXT"
-                          ? (message.text ?? '')
-                          : (message.caption ?? ''),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                      ),
-                    ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
+                          const SizedBox(width: 8),
+                          Text(
+                            message.audioDuration ?? '0:00',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      )
+                    else
                       Text(
-                        message.createdAt.toIso8601String().substring(11, 16),
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.7),
-                          fontSize: 12,
+                        message.type == "TEXT"
+                            ? (message.text ?? '')
+                            : (message.caption ?? ''),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
                         ),
                       ),
-                      if (isSentByMe) ...[
-                        const SizedBox(width: 4),
-                        if (!message.isSent)
-                          Icon(
-                            Icons.schedule,
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          message.createdAt.toIso8601String().substring(11, 16),
+                          style: TextStyle(
                             color: Colors.white.withOpacity(0.7),
-                            size: 16,
+                            fontSize: 12,
                           ),
-                        if (message.isSent &&
-                            !message.isDelivered &&
-                            !message.isRead)
-                          Icon(
-                            Icons.done,
-                            color: Colors.white.withOpacity(0.7),
-                            size: 16,
-                          ),
+                        ),
+                        if (isSentByMe) ...[
+                          const SizedBox(width: 4),
+                          if (!message.isSent)
+                            Icon(
+                              Icons.schedule,
+                              color: Colors.white.withOpacity(0.7),
+                              size: 16,
+                            ),
+                          if (message.isSent &&
+                              !message.isDelivered &&
+                              !message.isRead)
+                            Icon(
+                              Icons.done,
+                              color: Colors.white.withOpacity(0.7),
+                              size: 16,
+                            ),
 
-                        // if (message.isDelivered)
-                        //   Icon(
-                        //     Icons.done,
-                        //     color: Colors.white.withOpacity(0.7),
-                        //     size: 16,
-                        //   ),
+                          // if (message.isDelivered)
+                          //   Icon(
+                          //     Icons.done,
+                          //     color: Colors.white.withOpacity(0.7),
+                          //     size: 16,
+                          //   ),
 
-                        if (message.isRead)
-                          Icon(
-                            Icons.done_all,
-                            color: Colors.white.withOpacity(0.7),
-                            size: 16,
-                          ),
+                          if (message.isRead)
+                            Icon(
+                              Icons.done_all,
+                              color: Colors.white.withOpacity(0.7),
+                              size: 16,
+                            ),
+                        ],
                       ],
-                    ],
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1585,131 +1597,138 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         children: [
           if (!isSentByMe) const SizedBox(width: 10),
           Flexible(
-            child: Container(
-              constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width * 0.7,
-              ),
-              decoration: BoxDecoration(
-                color: isSentByMe
-                    ? const Color(0xFF18365B)
-                    : const Color(0xFF404040),
-                borderRadius: isSentByMe
-                    ? const BorderRadius.only(
-                        topLeft: Radius.circular(18),
-                        topRight: Radius.circular(18),
-                        bottomLeft: Radius.circular(18),
-                        bottomRight: Radius.circular(4),
-                      )
-                    : const BorderRadius.only(
-                        topLeft: Radius.circular(4),
-                        topRight: Radius.circular(18),
-                        bottomLeft: Radius.circular(18),
-                        bottomRight: Radius.circular(18),
-                      ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  GestureDetector(
-                    onTap: () {
-                      if (isCurrentlyPlaying) {
-                        _pauseAudioMessage();
-                      } else if (_playingMessageId == message.id) {
-                        _playAudioMessage(message);
-                      } else {
-                        _playAudioMessage(message);
-                      }
-                      HapticFeedback.lightImpact();
-                    },
-                    child: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        isCurrentlyPlaying ? Icons.pause : Icons.play_arrow,
-                        color: Colors.white,
-                        size: 24,
+            child: GestureDetector(
+              onTapDown: (TapDownDetails details) {
+                _showMessageContextMenu(context, message, details.globalPosition);
+              },
+              child: Container(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.5,
+                ),
+                decoration: BoxDecoration(
+                  color: isSentByMe
+                      ? const Color(0xFF18365B)
+                      : const Color(0xFF404040),
+                  borderRadius: isSentByMe
+                      ? const BorderRadius.only(
+                          topLeft: Radius.circular(18),
+                          topRight: Radius.circular(18),
+                          bottomLeft: Radius.circular(18),
+                          bottomRight: Radius.circular(4),
+                        )
+                      : const BorderRadius.only(
+                          topLeft: Radius.circular(4),
+                          topRight: Radius.circular(18),
+                          bottomLeft: Radius.circular(18),
+                          bottomRight: Radius.circular(18),
+                        ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    GestureDetector(
+                      onTap: () {
+                        if (isCurrentlyPlaying) {
+                          _pauseAudioMessage();
+                        } else if (_playingMessageId == message.id) {
+                          _playAudioMessage(message);
+                        } else {
+                          _playAudioMessage(message);
+                        }
+                        HapticFeedback.lightImpact();
+                      },
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        margin: EdgeInsets.only(bottom: 10, left: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          isCurrentlyPlaying ? Icons.pause : Icons.play_arrow,
+                          color: Colors.white,
+                          size: 24,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Audio waveform visualization
-                        Container(
-                          height: 30,
-                          child: Row(
-                            children: List.generate(15, (index) {
-                              double height = [
-                                0.3, 0.7, 0.5, 0.9, 0.4, 0.8, 0.6, 0.3,
-                                0.7, 0.5, 0.9, 0.4, 0.8, 0.6, 0.3
-                              ][index];
-                              
-                              // Animate waveform based on progress
-                              double progress = _audioDuration.inMilliseconds > 0 
-                                  ? _audioPosition.inMilliseconds / _audioDuration.inMilliseconds 
-                                  : 0.0;
-                              bool isActive = (index / 15) <= progress;
-                              
-                              return Container(
-                                width: 3,
-                                height: 30 * height,
-                                margin: const EdgeInsets.symmetric(horizontal: 1.5),
-                                decoration: BoxDecoration(
-                                  color: isActive && isCurrentlyPlaying 
-                                      ? Colors.white
-                                      : Colors.white.withOpacity(0.5),
-                                  borderRadius: BorderRadius.circular(1.5),
-                                ),
-                              );
-                            }),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Audio waveform visualization
+                          Container(
+                            height:30,
+                            margin: EdgeInsets.only(top: 8),
+                            child: Row(
+                              children: List.generate(15, (index) {
+                                double height = [
+                                  0.3, 0.7, 0.5, 0.9, 0.4, 0.8, 0.6, 0.3,
+                                  0.7, 0.5, 0.9, 0.4, 0.8, 0.6, 0.3
+                                ][index];
+                                
+                                // Animate waveform based on progress
+                                double progress = _audioDuration.inMilliseconds > 0 
+                                    ? _audioPosition.inMilliseconds / _audioDuration.inMilliseconds 
+                                    : 0.0;
+                                bool isActive = (index / 15) <= progress;
+                                
+                                return Container(
+                                  width: 3,
+                                  height: 30 * height,
+                                  margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                                  decoration: BoxDecoration(
+                                    color: isActive && isCurrentlyPlaying 
+                                        ? Colors.white
+                                        : Colors.white.withOpacity(0.5),
+                                    borderRadius: BorderRadius.circular(1.5),
+                                  ),
+                                );
+                              }),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              _playingMessageId == message.id 
-                                  ? _formatDuration(_audioPosition)
-                                  : message.audioDuration ?? "0:00",
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                              ),
-                            ),
-                            Row(
-                              children: [
-                                Text(
-                                  message.createdAt.toIso8601String().substring(11, 16),
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.7),
-                                    fontSize: 12,
-                                  ),
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _playingMessageId == message.id 
+                                    ? _formatDuration(_audioPosition)
+                                    : message.audioDuration ?? "0:00",
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
                                 ),
-                                if (isSentByMe) ...[
-                                  const SizedBox(width: 4),
-                                  Icon(
-                                    message.isRead ? Icons.done_all : Icons.done,
-                                    color: message.isRead 
-                                        ? Colors.blue 
-                                        : Colors.white.withOpacity(0.7),
-                                    size: 16,
+                              ),
+                              Row(
+                                children: [
+                                  Text(
+                                    message.createdAt.toIso8601String().substring(11, 16),
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(0.7),
+                                      fontSize: 12,
+                                    ),
                                   ),
+                                  if (isSentByMe) ...[
+                                    const SizedBox(width: 4),
+                                    Icon(
+                                      message.isRead ? Icons.done_all : Icons.done,
+                                      color: message.isRead 
+                                          ? Colors.blue 
+                                          : Colors.white.withOpacity(0.7),
+                                      size: 16,
+                                    ),
+                                  ],
                                 ],
-                              ],
-                            ),
-                          ],
-                        ),
-                      ],
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -1741,191 +1760,199 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         children: [
           if (!isSentByMe) const SizedBox(width: 10),
           Flexible(
-            child: Container(
-              constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width * 0.7,
-              ),
-              decoration: BoxDecoration(
-                color: isSentByMe
-                    ? const Color(0xFF18365B)
-                    : const Color(0xFF404040),
-                borderRadius: isSentByMe
-                    ? const BorderRadius.only(
+            child: GestureDetector(
+              onTapDown: (TapDownDetails details) {
+                _showMessageContextMenu(context, message, details.globalPosition);
+              },
+              child: Container(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.7,
+                ),
+                decoration: BoxDecoration(
+                  color: isSentByMe
+                      ? const Color(0xFF18365B)
+                      : const Color(0xFF404040),
+                  borderRadius: isSentByMe
+                      ? const BorderRadius.only(
+                          topLeft: Radius.circular(18),
+                          topRight: Radius.circular(18),
+                          bottomLeft: Radius.circular(18),
+                          bottomRight: Radius.circular(4),
+                        )
+                      : const BorderRadius.only(
+                          topLeft: Radius.circular(4),
+                          topRight: Radius.circular(18),
+                          bottomLeft: Radius.circular(18),
+                          bottomRight: Radius.circular(18),
+                        ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Image display
+                    ClipRRect(
+                      borderRadius: const BorderRadius.only(
                         topLeft: Radius.circular(18),
                         topRight: Radius.circular(18),
-                        bottomLeft: Radius.circular(18),
+                        bottomLeft: Radius.circular(4),
                         bottomRight: Radius.circular(4),
-                      )
-                    : const BorderRadius.only(
-                        topLeft: Radius.circular(4),
-                        topRight: Radius.circular(18),
-                        bottomLeft: Radius.circular(18),
-                        bottomRight: Radius.circular(18),
                       ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Image display
-                  ClipRRect(
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(18),
-                      topRight: Radius.circular(18),
-                      bottomLeft: Radius.circular(4),
-                      bottomRight: Radius.circular(4),
-                    ),
-                    child: Container(
-                      constraints: const BoxConstraints(
-                        maxWidth: 200,
-                        maxHeight: 200,
-                      ),
-                      child: AspectRatio(
-                        aspectRatio: 1, // Square aspect ratio for smaller images
-                        child: message.fileId != null
-                          ? Image.network(
-                              '${getEnv("API_BASE_URL")}/uploads/${message.fileId}',
-                              fit: BoxFit.cover,
-                              
-                              loadingBuilder: (context, child, loadingProgress) {
-                                if (loadingProgress == null) return child;
-                                return Container(
-                                  color: Colors.grey.shade300,
-                                  child: Center(
-                                    child: CircularProgressIndicator(
-                                      value: loadingProgress.expectedTotalBytes != null
-                                          ? loadingProgress.cumulativeBytesLoaded /
-                                              loadingProgress.expectedTotalBytes!
-                                          : null,
-                                      color: const Color(0xFF3498DB),
-                                    ),
-                                  ),
-                                );
-                              },
-                              errorBuilder: (context, error, stackTrace) {
-                                return Container(
-                                  color: Colors.grey.shade300,
-                                  child: const Center(
-                                    child: Icon(
-                                      Icons.broken_image,
-                                      color: Colors.grey,
-                                      size: 20,
-                                    ),
-                                  ),
-                                );
-                              },
-                            )
-                          : message.tempImagePath != null
-                            ? Image.file(
-                                File(message.tempImagePath!),
-                                fit: BoxFit.cover,
-                              )
-                            : Container(
-                                color: Colors.grey.shade300,
-                                child: const Center(
-                                  child: Icon(
-                                    Icons.image,
-                                    color: Colors.grey,
-                                    size: 20,
-                                  ),
-                                ),
-                              ),
-                      ),
-                    ),
-                  ),
-                  // Caption and timestamp
-                  if (message.caption != null && message.caption!.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            message.caption!,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                            ),
+                      child: GestureDetector(
+                        onTap: () => _showImagePopup(context, message),
+                        child: Container(
+                          constraints: const BoxConstraints(
+                            maxWidth: 200,
+                            maxHeight: 200,
                           ),
-                          const SizedBox(height: 2),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                message.createdAt.toIso8601String().substring(11, 16),
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.7),
-                                  fontSize: 12,
-                                ),
+                          child: AspectRatio(
+                            aspectRatio: 1, // Square aspect ratio for smaller images
+                            child: message.fileId != null
+                              ? Image.network(
+                                  '${getEnv("API_BASE_URL")}/uploads/${message.fileId}',
+                                  fit: BoxFit.cover,
+                                  
+                                  loadingBuilder: (context, child, loadingProgress) {
+                                    if (loadingProgress == null) return child;
+                                    return Container(
+                                      color: Colors.grey.shade300,
+                                      child: Center(
+                                        child: CircularProgressIndicator(
+                                          value: loadingProgress.expectedTotalBytes != null
+                                              ? loadingProgress.cumulativeBytesLoaded /
+                                                  loadingProgress.expectedTotalBytes!
+                                              : null,
+                                          color: const Color(0xFF3498DB),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                      color: Colors.grey.shade300,
+                                      child: const Center(
+                                        child: Icon(
+                                          Icons.broken_image,
+                                          color: Colors.grey,
+                                          size: 20,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                )
+                              : message.tempImagePath != null
+                                ? Image.file(
+                                    File(message.tempImagePath!),
+                                    fit: BoxFit.cover,
+                                  )
+                                : Container(
+                                    color: Colors.grey.shade300,
+                                    child: const Center(
+                                      child: Icon(
+                                        Icons.image,
+                                        color: Colors.grey,
+                                        size: 20,
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Caption and timestamp
+                    if (message.caption != null && message.caption!.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              message.caption!,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
                               ),
-                              if (isSentByMe) ...[
-                                const SizedBox(width: 4),
-                                if (!message.isSent)
-                                  Icon(
-                                    Icons.schedule,
+                            ),
+                            const SizedBox(height: 2),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  message.createdAt.toIso8601String().substring(11, 16),
+                                  style: TextStyle(
                                     color: Colors.white.withOpacity(0.7),
-                                    size: 16,
+                                    fontSize: 12,
                                   ),
-                                if (message.isSent &&
-                                    !message.isDelivered &&
-                                    !message.isRead)
-                                  Icon(
-                                    Icons.done,
-                                    color: Colors.white.withOpacity(0.7),
-                                    size: 16,
-                                  ),
-                                if (message.isRead)
-                                  Icon(
-                                    Icons.done_all,
-                                    color: Colors.white.withOpacity(0.7),
-                                    size: 16,
-                                  ),
+                                ),
+                                if (isSentByMe) ...[
+                                  const SizedBox(width: 4),
+                                  if (!message.isSent)
+                                    Icon(
+                                      Icons.schedule,
+                                      color: Colors.white.withOpacity(0.7),
+                                      size: 16,
+                                    ),
+                                  if (message.isSent &&
+                                      !message.isDelivered &&
+                                      !message.isRead)
+                                    Icon(
+                                      Icons.done,
+                                      color: Colors.white.withOpacity(0.7),
+                                      size: 16,
+                                    ),
+                                  if (message.isRead)
+                                    Icon(
+                                      Icons.done_all,
+                                      color: Colors.white.withOpacity(0.7),
+                                      size: 16,
+                                    ),
+                                ],
                               ],
-                            ],
-                          ),
-                        ],
-                      ),
-                    )
-                  else
-                    // Just timestamp if no caption
-                    Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            message.createdAt.toIso8601String().substring(11, 16),
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.7),
-                              fontSize: 12,
                             ),
-                          ),
-                          if (isSentByMe) ...[
-                            const SizedBox(width: 4),
-                            if (!message.isSent)
-                              Icon(
-                                Icons.schedule,
-                                color: Colors.white.withOpacity(0.7),
-                                size: 16,
-                              ),
-                            if (message.isSent &&
-                                !message.isDelivered &&
-                                !message.isRead)
-                              Icon(
-                                Icons.done,
-                                color: Colors.white.withOpacity(0.7),
-                                size: 16,
-                              ),
-                            if (message.isRead)
-                              Icon(
-                                Icons.done_all,
-                                color: Colors.white.withOpacity(0.7),
-                                size: 16,
-                              ),
                           ],
-                        ],
+                        ),
+                      )
+                    else
+                      // Just timestamp if no caption
+                      Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              message.createdAt.toIso8601String().substring(11, 16),
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.7),
+                                fontSize: 12,
+                              ),
+                            ),
+                            if (isSentByMe) ...[
+                              const SizedBox(width: 4),
+                              if (!message.isSent)
+                                Icon(
+                                  Icons.schedule,
+                                  color: Colors.white.withOpacity(0.7),
+                                  size: 16,
+                                ),
+                              if (message.isSent &&
+                                  !message.isDelivered &&
+                                  !message.isRead)
+                                Icon(
+                                  Icons.done,
+                                  color: Colors.white.withOpacity(0.7),
+                                  size: 16,
+                                ),
+                              if (message.isRead)
+                                Icon(
+                                  Icons.done_all,
+                                  color: Colors.white.withOpacity(0.7),
+                                  size: 16,
+                                ),
+                            ],
+                          ],
+                        ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -2016,6 +2043,611 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
           ),
         ],
       ),
+    );
+  }
+
+  // Show message context menu with comprehensive options
+  void _showMessageContextMenu(BuildContext context, Message message, Offset tapPosition) {
+    final bool isSentByMe = _currentUserId != null && message.senderId == _currentUserId;
+    
+    showMenu(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        tapPosition.dx,
+        tapPosition.dy - 200,
+        tapPosition.dx + 150,
+        tapPosition.dy,
+      ),
+      color: const Color(0xFF2A2A2A),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      elevation: 8,
+      items: [
+        // Reply option
+        // PopupMenuItem(
+        //   value: 'reply',
+        //   child: Row(
+        //     children: [
+        //       Icon(Icons.reply, color: Color(0xFFE8E7EA), size: 20),
+        //       SizedBox(width: 12),
+        //       Text(
+        //         'Reply',
+        //         style: TextStyle(color: Color(0xFFE8E7EA), fontSize: 16),
+        //       ),
+        //     ],
+        //   ),
+        // ),
+        
+        // Copy Media option (for image/audio messages)
+        if (message.type == 'PHOTO' || message.type == 'AUDIO')
+          PopupMenuItem(
+            value: 'copy_media',
+            child: Row(
+              children: [
+                Icon(Icons.copy, color: Color(0xFFE8E7EA), size: 20),
+                SizedBox(width: 12),
+                Text(
+                  'Copy Media',
+                  style: TextStyle(color: Color(0xFFE8E7EA), fontSize: 16),
+                ),
+              ],
+            ),
+          ),
+        
+        // Copy Text option (for text messages)
+        if ((message.type == 'TEXT' || message.type == "PHOTO" ) && (message.text != null || message.caption != null))
+          PopupMenuItem(
+            value: 'copy_text',
+            child: Row(
+              children: [
+                Icon(Icons.copy, color: Color(0xFFE8E7EA), size: 20),
+                SizedBox(width: 12),
+                Text(
+                  'Copy Text',
+                  style: TextStyle(color: Color(0xFFE8E7EA), fontSize: 16),
+                ),
+              ],
+            ),
+          ),
+        
+        // Save As option (for media messages)
+        if (message.type == 'PHOTO' || message.type == 'AUDIO')
+          PopupMenuItem(
+            value: 'save_as',
+            child: Row(
+              children: [
+                Icon(Icons.download, color: Color(0xFFE8E7EA), size: 20),
+                SizedBox(width: 12),
+                Text(
+                  'Save As...',
+                  style: TextStyle(color: Color(0xFFE8E7EA), fontSize: 16),
+                ),
+              ],
+            ),
+          ),
+        
+        // Pin option
+        // PopupMenuItem(
+        //   value: 'pin',
+        //   child: Row(
+        //     children: [
+        //       Icon(Icons.push_pin, color: Color(0xFFE8E7EA), size: 20),
+        //       SizedBox(width: 12),
+        //       Text(
+        //         'Pin',
+        //         style: TextStyle(color: Color(0xFFE8E7EA), fontSize: 16),
+        //       ),
+        //     ],
+        //   ),
+        // ),
+        
+        // Forward option
+        // PopupMenuItem(
+        //   value: 'forward',
+        //   child: Row(
+        //     children: [
+        //       Icon(Icons.forward, color: Color(0xFFE8E7EA), size: 20),
+        //       SizedBox(width: 12),
+        //       Text(
+        //         'Forward',
+        //         style: TextStyle(color: Color(0xFFE8E7EA), fontSize: 16),
+        //       ),
+        //     ],
+        //   ),
+        // ),
+        
+        // Select option
+        // PopupMenuItem(
+        //   value: 'select',
+        //   child: Row(
+        //     children: [
+        //       Icon(Icons.check_circle_outline, color: Color(0xFFE8E7EA), size: 20),
+        //       SizedBox(width: 12),
+        //       Text(
+        //         'Select',
+        //         style: TextStyle(color: Color(0xFFE8E7EA), fontSize: 16),
+        //       ),
+        //     ],
+        //   ),
+        // ),
+        
+        // Edit option (only for own text messages)
+        if (isSentByMe && message.type == 'TEXT')
+          PopupMenuItem(
+            value: 'edit',
+            child: Row(
+              children: [
+                Icon(Icons.edit, color: Color(0xFFE8E7EA), size: 20),
+                SizedBox(width: 12),
+                Text(
+                  'Edit',
+                  style: TextStyle(color: Color(0xFFE8E7EA), fontSize: 16),
+                ),
+              ],
+            ),
+          ),
+        
+        // Delete option (only for own messages)
+        if (isSentByMe)
+          PopupMenuItem(
+            value: 'delete',
+            child: Row(
+              children: [
+                Icon(Icons.delete, color: Color(0xFFE74C3C), size: 20),
+                SizedBox(width: 12),
+                Text(
+                  'Delete',
+                  style: TextStyle(color: Color(0xFFE74C3C), fontSize: 16),
+                ),
+              ],
+            ),
+          ),
+      ],
+    ).then((value) {
+      if (value != null) {
+        switch (value) {
+          case 'reply':
+            _replyToMessage(message);
+            break;
+          case 'copy_media':
+            _copyMedia(message);
+            break;
+          case 'copy_text':
+            _copyText(message);
+            break;
+          case 'save_as':
+            _saveMediaAs(message);
+            break;
+          case 'pin':
+            _pinMessage(message);
+            break;
+          case 'forward':
+            _forwardMessage(message);
+            break;
+          case 'select':
+            _selectMessage(message);
+            break;
+          case 'edit':
+            _editMessage(message);
+            break;
+          case 'delete':
+            _deleteMessage(message);
+            break;
+        }
+      }
+    });
+  }
+
+  // Reply to message functionality
+  void _replyToMessage(Message message) {
+    // Set the message to reply to and focus the text input
+    setState(() {
+      _replyingToMessage = message;
+    });
+    _textController.clear();
+    FocusScope.of(context).requestFocus(_textFocusNode);
+    _showSnackBar('Replying to message');
+  }
+
+  // Copy media to clipboard
+  void _copyMedia(Message message) {
+    if (message.type == 'PHOTO') {
+      _showSnackBar('Image copied to clipboard');
+      // TODO: Implement actual image copy to clipboard
+    } else if (message.type == 'AUDIO') {
+      _showSnackBar('Audio file copied to clipboard');
+      // TODO: Implement actual audio copy to clipboard
+    }
+  }
+
+  // Copy text to clipboard
+  void _copyText(Message message) {
+    if (message.text != null && message.text!.isNotEmpty) {
+      Clipboard.setData(ClipboardData(text: message.text!));
+      _showSnackBar('Text copied to clipboard');
+    }else{
+      if(message.caption != null && message.caption!.isNotEmpty){
+        Clipboard.setData(ClipboardData(text: message.caption!));
+        _showSnackBar('Caption copied to clipboard');
+      }
+    }
+  }
+
+  // Save media as file
+  void _saveMediaAs(Message message) {
+    if (message.type == 'PHOTO') {
+      _showSnackBar('Saving image...');
+      // TODO: Implement image download and save
+    } else if (message.type == 'AUDIO') {
+      _showSnackBar('Saving audio file...');
+      // TODO: Implement audio download and save
+    }
+  }
+
+  // Pin message functionality
+  void _pinMessage(Message message) {
+    _showSnackBar('Message pinned');
+    // TODO: Implement actual message pinning
+  }
+
+  // Forward message functionality
+  void _forwardMessage(Message message) {
+    _showSnackBar('Forward message (feature coming soon)');
+    // TODO: Show contact/chat selection dialog for forwarding
+  }
+
+  // Select message functionality
+  void _selectMessage(Message message) {
+    setState(() {
+      if (_selectedMessages.contains(message.id)) {
+        _selectedMessages.remove(message.id);
+      } else {
+        _selectedMessages.add(message.id);
+      }
+      _isSelectionMode = _selectedMessages.isNotEmpty;
+    });
+    
+    if (_selectedMessages.isNotEmpty) {
+      _showSnackBar('${_selectedMessages.length} message(s) selected');
+    }
+  }
+
+  // Edit message functionality
+  void _editMessage(Message message) {
+    // Only allow editing text messages
+    if (message.type != 'TEXT') {
+      _showSnackBar('Only text messages can be edited');
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        final TextEditingController editController = TextEditingController(text: message.text);
+        
+        return AlertDialog(
+          backgroundColor: const Color(0xFF2A2A2A),
+          title: const Text(
+            'Edit Message',
+            style: TextStyle(color: Color(0xFFE8E7EA)),
+          ),
+          content: TextField(
+            controller: editController,
+            style: const TextStyle(color: Color(0xFFE8E7EA)),
+            maxLines: null,
+            decoration: InputDecoration(
+              hintText: 'Type your message...',
+              hintStyle: TextStyle(color: Colors.grey.shade400),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade600),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: Colors.grey.shade600),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFF3498DB)),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                if (editController.text.trim().isNotEmpty) {
+                  _updateMessage(message, editController.text.trim());
+                  Navigator.of(context).pop();
+                } else {
+                  _showSnackBar('Message cannot be empty');
+                }
+              },
+              child: const Text(
+                'Save',
+                style: TextStyle(color: Color(0xFF3498DB)),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Delete message functionality
+  void _deleteMessage(Message message) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF2A2A2A),
+          title: const Text(
+            'Delete Message',
+            style: TextStyle(color: Color(0xFFE8E7EA)),
+          ),
+          content: const Text(
+            'Are you sure you want to delete this message? This action cannot be undone.',
+            style: TextStyle(color: Color(0xFFE8E7EA)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                _removeMessage(message);
+                Navigator.of(context).pop();
+              },
+              child: const Text(
+                'Delete',
+                style: TextStyle(color: Color(0xFFE74C3C)),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Update message via API
+  void _updateMessage(Message message, String newText) async {
+    try {
+      // Update UI immediately for better UX
+      setState(() {
+        final index = _messages.indexWhere((msg) => msg.id == message.id);
+        if (index != -1) {
+          // Create new Message object with updated text
+          final updatedMessage = Message(
+            id: message.id,
+            senderId: message.senderId,
+            chatId: message.chatId,
+            type: message.type,
+            text: newText,
+            caption: message.caption,
+            fileId: message.fileId,
+            tempImagePath: message.tempImagePath,
+            createdAt: message.createdAt,
+            updatedAt: DateTime.now(),
+            sender: message.sender,
+            isSent: message.isSent,
+            isDelivered: message.isDelivered,
+            isRead: message.isRead,
+            isAudio: message.isAudio,
+            audioDuration: message.audioDuration,
+            referenceId: message.referenceId,
+            statuses: message.statuses,
+          );
+          _messages[index] = updatedMessage;
+        }
+      });
+
+      _showSnackBar('Message updated locally (API integration needed)');
+    } catch (e) {
+      print('Error updating message: $e');
+      _showSnackBar('Failed to update message');
+      
+      // Revert UI changes on error
+      setState(() {
+        final index = _messages.indexWhere((msg) => msg.id == message.id);
+        if (index != -1) {
+          _messages[index] = message; // Revert to original
+        }
+      });
+    }
+  }
+
+  // Remove message via API
+  void _removeMessage(Message message) async {
+    try {
+      // Remove from UI immediately for better UX
+      setState(() {
+        _messages.removeWhere((msg) => msg.id == message.id);
+      });
+
+      _showSnackBar('Message deleted locally (API integration needed)');
+    } catch (e) {
+      print('Error deleting message: $e');
+      _showSnackBar('Failed to delete message');
+      
+      // Revert UI changes on error
+      setState(() {
+        _messages.add(message);
+        _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      });
+    }
+  }
+
+  // Show snackbar helper
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: const Color(0xFF2A2A2A),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // Show image popup when an image is tapped
+  void _showImagePopup(BuildContext context, Message message) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black87,
+      builder: (BuildContext context) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          child: Stack(
+            children: [
+              // Image display
+              Center(
+                child: Container(
+                  margin: const EdgeInsets.all(20),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: InteractiveViewer(
+                      panEnabled: true,
+                      boundaryMargin: const EdgeInsets.all(20),
+                      minScale: 0.5,
+                      maxScale: 4.0,
+                      child: message.fileId != null
+                        ? Image.network(
+                            '${getEnv("API_BASE_URL")}/uploads/${message.fileId}',
+                            fit: BoxFit.contain,
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return Container(
+                                width: 200,
+                                height: 200,
+                                color: Colors.grey.shade800,
+                                child: Center(
+                                  child: CircularProgressIndicator(
+                                    value: loadingProgress.expectedTotalBytes != null
+                                        ? loadingProgress.cumulativeBytesLoaded /
+                                            loadingProgress.expectedTotalBytes!
+                                        : null,
+                                    color: const Color(0xFF3498DB),
+                                  ),
+                                ),
+                              );
+                            },
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                width: 200,
+                                height: 200,
+                                color: Colors.grey.shade800,
+                                child: const Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.broken_image,
+                                        color: Colors.grey,
+                                        size: 50,
+                                      ),
+                                      SizedBox(height: 8),
+                                      Text(
+                                        'Failed to load image',
+                                        style: TextStyle(
+                                          color: Colors.grey,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          )
+                        : message.tempImagePath != null
+                          ? Image.file(
+                              File(message.tempImagePath!),
+                              fit: BoxFit.contain,
+                            )
+                          : Container(
+                              width: 200,
+                              height: 200,
+                              color: Colors.grey.shade800,
+                              child: const Center(
+                                child: Icon(
+                                  Icons.image,
+                                  color: Colors.grey,
+                                  size: 50,
+                                ),
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+              ),
+              // Close button
+              Positioned(
+                top: 40,
+                right: 20,
+                child: GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                ),
+              ),
+              // Caption if available
+              if (message.caption != null && message.caption!.isNotEmpty)
+                Positioned(
+                  bottom: 40,
+                  left: 20,
+                  right: 20,
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          message.caption!,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          message.createdAt.toIso8601String().substring(11, 16),
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -2170,10 +2802,9 @@ class _GalleryContentState extends State<_GalleryContent> {
             await FilePicker.platform.pickFiles(type: FileType.image);
 
         if (result != null) {
-          Uint8List? fileBytes = result.files.first.bytes;
           String fileName = result.files.first.name;
           print(fileName);
-          // Use fileBytes or fileName as needed
+          // Use fileName as needed
         }
       } else {
         final permission = await Permission.photos.request();

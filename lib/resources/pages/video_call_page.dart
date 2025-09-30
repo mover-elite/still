@@ -709,7 +709,9 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
     // Determine total participants (local + remote)
     final totalParticipants =
         (_room?.localParticipant != null ? 1 : 0) + _remoteParticipants.length;
-
+    print("PARTICIPANTS COUNT: $totalParticipants");
+    print(_room?.localParticipant);
+    print(_room?.remoteParticipants);
     if (totalParticipants == 0) {
       // No LiveKit connection, fall back to demo participants
       if (_participants.length == 1) {
