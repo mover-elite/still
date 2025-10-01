@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_app/app/models/message.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:image_picker/image_picker.dart';
@@ -17,11 +18,13 @@ import '/app/networking/chat_api_service.dart';
 import '/app/networking/websocket_service.dart';
 import '/resources/pages/video_call_page.dart';
 import '/resources/pages/voice_call_page.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:file_picker/file_picker.dart';
 import "../../app/utils/chat.dart";
 import "/app/services/chat_service.dart";
 import 'package:audioplayers/audioplayers.dart';
+import 'package:saver_gallery/saver_gallery.dart';
+import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
 
 class ChatScreenPage extends NyStatefulWidget {
   static RouteView path = ("/chat-screen", (_) => ChatScreenPage());
@@ -36,6 +39,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   bool _showMediaPicker = false;
   bool _hasText = false;
   XFile? _pickedImage;
+  XFile? _pickedVideo;
   bool _isRecording = false;
   String? _recordedAudioPath;
   late Record _audioRecorder;
@@ -77,6 +81,18 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   final FocusNode _textFocusNode = FocusNode();
   Set<int> _selectedMessages = {};
   bool _isSelectionMode = false;
+
+  // Media preview state
+  bool _showFullscreenPreview = false;
+  String? _previewMediaType; // 'image' or 'video'
+  // Video preview controllers
+  VideoPlayerController? _previewVideoController;
+  ChewieController? _previewChewieController;
+  bool _videoPreviewError = false;
+  // Inline video message state
+  final Map<int, VideoPlayerController> _videoMsgControllers = {};
+  final Map<int, ChewieController> _videoMsgChewie = {};
+  final Set<int> _videoMsgLoading = {};
 
   @override
   get init => () async {
@@ -452,6 +468,10 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
     _headerVisibilityTimer?.cancel(); // Dispose the header visibility timer
     _audioRecorder.dispose();
     _audioPlayer?.dispose();
+    _previewChewieController?.dispose();
+    _previewVideoController?.dispose();
+    for (final c in _videoMsgChewie.values) { c.dispose(); }
+    for (final vc in _videoMsgControllers.values) { vc.dispose(); }
     super.dispose();
   }
 
@@ -577,7 +597,161 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   void _closeImagePreview() {
     setState(() {
       _pickedImage = null;
+      _pickedVideo = null;
     });
+  }
+
+  void _showFullscreenMediaPreview() {
+    setState(() {
+      _showFullscreenPreview = true;
+      _previewMediaType = _pickedImage != null ? 'image' : 'video';
+    });
+
+    if (_previewMediaType == 'video' && _pickedVideo != null) {
+      _initializePreviewVideo(_pickedVideo!.path);
+    }
+  }
+
+  void _closeFullscreenPreview() {
+    setState(() {
+      _showFullscreenPreview = false;
+      _previewMediaType = null;
+    });
+
+    // Dispose preview controllers when closing
+    _previewChewieController?.dispose();
+    _previewVideoController?.dispose();
+    _previewChewieController = null;
+    _previewVideoController = null;
+    _videoPreviewError = false;
+  }
+
+  Future<void> _initializePreviewVideo(String pathOrId) async {
+    // Safely dispose any existing controllers
+    try {
+      _previewChewieController?.dispose();
+      if (_previewVideoController != null) {
+        await _previewVideoController!.dispose();
+      }
+    } catch (_) {}
+    _previewChewieController = null;
+    _previewVideoController = null;
+    setState(() {
+      _videoPreviewError = false;
+    });
+    // Defer actual initialization to next frame to ensure platform channel is ready
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      try {
+        // Decide whether this is a local file path or an id referencing a remote file
+        VideoPlayerController controller;
+        String? resolvedInfo;
+
+        bool looksLikeLocalPath = pathOrId.contains('/') || pathOrId.contains('.') || pathOrId.startsWith('file:');
+        if (looksLikeLocalPath) {
+          final file = File(pathOrId);
+            if (!await file.exists()) {
+            throw Exception('Video file missing at path: ' + pathOrId);
+          }
+          resolvedInfo = 'local:' + pathOrId;
+          controller = VideoPlayerController.file(file);
+        } else {
+          // Treat as id - build network URL like other media (mirroring audio/photo logic)
+          final baseUrl = getEnv("API_BASE_URL");
+          if (baseUrl == null) {
+            throw Exception('API_BASE_URL not set for video id: ' + pathOrId);
+          }
+          final url = baseUrl.endsWith('/') ? baseUrl + 'files/' + pathOrId : baseUrl + '/files/' + pathOrId;
+          resolvedInfo = 'network:' + url;
+          controller = VideoPlayerController.network(url);
+        }
+
+        debugPrint('Initializing preview video -> ' + resolvedInfo);
+
+        _previewVideoController = controller;
+        await controller.initialize();
+        if (!mounted) return;
+        
+        _previewChewieController = ChewieController(
+          videoPlayerController: controller,
+          autoPlay: true,
+          looping: false,
+          allowFullScreen: false,
+          allowMuting: true,
+          materialProgressColors: ChewieProgressColors(
+            playedColor: Colors.blueAccent,
+            handleColor: Colors.blue,
+            backgroundColor: Colors.white24,
+            bufferedColor: Colors.blueGrey,
+          ),
+        );
+        setState(() {});
+      } catch (e) {
+        debugPrint('Video preview init error: $e');
+        if (mounted) {
+          setState(() {
+            _videoPreviewError = true;
+          });
+        }
+      }
+    });
+  }
+
+  Future<void> _openVideoPlayerDialog({String? filePath, String? networkUrl}) async {
+    VideoPlayerController? videoController;
+    ChewieController? chewieController;
+    
+    try {
+      if (filePath == null && networkUrl == null) return;
+      if (filePath != null) {
+        final file = File(filePath);
+        if (!await file.exists()) throw Exception('Local video not found');
+        videoController = VideoPlayerController.file(file);
+      } else {
+        // Using network() for broader compatibility in some plugin versions
+        videoController = VideoPlayerController.network(networkUrl!);
+      }
+      await videoController.initialize();
+      chewieController = ChewieController(
+        videoPlayerController: videoController,
+        autoPlay: true,
+        looping: false,
+        allowFullScreen: true,
+        allowMuting: true,
+        materialProgressColors: ChewieProgressColors(
+          playedColor: Colors.blueAccent,
+          handleColor: Colors.blue,
+          backgroundColor: Colors.white24,
+          bufferedColor: Colors.blueGrey,
+        ),
+      );
+
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        barrierDismissible: true,
+        builder: (_) => Dialog(
+          backgroundColor: Colors.black,
+          insetPadding: const EdgeInsets.all(12),
+          child: AspectRatio(
+            aspectRatio: videoController!.value.aspectRatio == 0
+                ? 16 / 9
+                : videoController.value.aspectRatio,
+            child: Chewie(controller: chewieController!),
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error opening video player: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Unable to play video')),
+        );
+      }
+    } finally {
+  chewieController?.dispose();
+      await videoController?.dispose();
+    }
   }
 
   void _sendMessage() async {
@@ -591,7 +765,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
 
       // Add message to UI immediately for better UX
       final referenceId = DateTime.now().millisecondsSinceEpoch;
-      final type = _pickedImage != null ? "PHOTO" : "TEXT";
+      final type = _pickedImage != null ? "PHOTO" : (_pickedVideo != null ? "VIDEO" : "TEXT");
       
       setState(() {
         final now = DateTime.now();
@@ -601,7 +775,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
           chatId: _chat?.id ?? 0,
           type: type,
           text: messageText,
-          caption: _pickedImage != null ? messageText : null,
+          caption: (_pickedImage != null || _pickedVideo != null) ? messageText : null,
           fileId: null,
           createdAt: now,
           updatedAt: now,
@@ -612,6 +786,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
             lastName: null,
           ),
           tempImagePath: _pickedImage?.path,
+          tempVideoPath: _pickedVideo?.path,
           referenceId: referenceId,
           isSent: false,
           statuses: [],
@@ -629,7 +804,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       _messageController.clear();
       _scrollToBottom();
 
-      final shouldSendViaWebSocket =  WebSocketService().isConnected && _pickedImage == null;
+      final shouldSendViaWebSocket =  WebSocketService().isConnected && _pickedImage == null && _pickedVideo == null;
       print('🔍 Should send via WebSocket: $shouldSendViaWebSocket');
 
       if (shouldSendViaWebSocket) {
@@ -643,13 +818,14 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
             chatId: _chat!.id,
             text: messageText,
             caption: messageText,
-            filePath: _pickedImage?.path,
+            filePath: _pickedImage?.path ?? _pickedVideo?.path,
             referenceId: referenceId,
-            type: "PHOTO",
+            type: _pickedImage != null ? "PHOTO" : (_pickedVideo != null ? "VIDEO" : "TEXT"),
 
           );
           setState(() {
             _pickedImage = null; // Clear the picked image after sending
+            _pickedVideo = null; // Clear the picked video after sending
           });
           
           // if (result != null) {}
@@ -737,11 +913,11 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
       
       // Then animate to ensure smooth scroll
-      Future.delayed(const Duration(milliseconds: 50), () {
+      Future.delayed(const Duration(milliseconds: 200), () {
         if (mounted && _scrollController.hasClients) {
           _scrollController.animateTo(
             _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 200),
+            duration: const Duration(milliseconds: 500),
             curve: Curves.easeOut,
           );
         }
@@ -1128,45 +1304,57 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    // Image preview above input
-                                    if (_pickedImage != null)
+                                    // Media preview above input
+                                    if (_pickedImage != null || _pickedVideo != null)
                                       Container(
                                         margin: const EdgeInsets.only(bottom: 12),
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(12),
-                                          color: Colors.black.withOpacity(0.3),
-                                        ),
-                                        child: Stack(
-                                          children: [
-                                            ClipRRect(
+                                        child: GestureDetector(
+                                          onTap: _showFullscreenMediaPreview,
+                                          child: Container(
+                                            padding: const EdgeInsets.all(12),
+                                            decoration: BoxDecoration(
                                               borderRadius: BorderRadius.circular(12),
-                                              child: Image.file(
-                                                File(_pickedImage!.path),
-                                                height: 120,
-                                                width: double.infinity,
-                                                fit: BoxFit.cover,
-                                              ),
+                                              color: Colors.green.withOpacity(0.1),
+                                              border: Border.all(color: Colors.green.withOpacity(0.3)),
                                             ),
-                                            Positioned(
-                                              top: 8,
-                                              right: 8,
-                                              child: GestureDetector(
-                                                onTap: _closeImagePreview,
-                                                child: Container(
-                                                  padding: const EdgeInsets.all(4),
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.black.withOpacity(0.7),
-                                                    shape: BoxShape.circle,
-                                                  ),
-                                                  child: const Icon(
-                                                    Icons.close,
-                                                    color: Colors.white,
-                                                    size: 16,
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  _pickedImage != null ? Icons.image : Icons.videocam,
+                                                  color: Colors.green,
+                                                  size: 24,
+                                                ),
+                                                const SizedBox(width: 12),
+                                                Expanded(
+                                                  child: Text(
+                                                    _pickedImage != null 
+                                                        ? 'Image selected - Tap to preview'
+                                                        : 'Video selected - Tap to preview',
+                                                    style: const TextStyle(
+                                                      color: Colors.green,
+                                                      fontWeight: FontWeight.w500,
+                                                    ),
                                                   ),
                                                 ),
-                                              ),
+                                                GestureDetector(
+                                                  onTap: _closeImagePreview,
+                                                  child: Container(
+                                                    padding: const EdgeInsets.all(4),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.red.withOpacity(0.1),
+                                                      shape: BoxShape.circle,
+                                                      border: Border.all(color: Colors.red.withOpacity(0.3)),
+                                                    ),
+                                                    child: const Icon(
+                                                      Icons.close,
+                                                      color: Colors.red,
+                                                      size: 16,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
                                             ),
-                                          ],
+                                          ),
                                         ),
                                       ),
                                     // Recording indicator
@@ -1378,6 +1566,9 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
               ),
             ],
           ),
+          // Fullscreen media preview overlay
+          if (_showFullscreenPreview)
+            _buildFullscreenMediaPreview(),
         ],
       ),
     );
@@ -1393,6 +1584,10 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       case "IMAGE":
       case "PHOTO":
         return _buildPhotoMessage(message);
+      
+      case "VIDEO":
+        return _buildVideoMessage(message);
+        
       case "TEXT":
       default:
         return _buildTextMessage(message);
@@ -1962,6 +2157,294 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
     );
   }
 
+  Widget _buildVideoMessage(Message message) {
+    final bool isSentByMe = _currentUserId != null && message.senderId == _currentUserId;
+    final String? fileId = message.fileId;
+    final String? tempVideoPath = message.tempVideoPath;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: isSentByMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!isSentByMe) const SizedBox(width: 10),
+          Flexible(
+            child: GestureDetector(
+              onTapDown: (TapDownDetails details) {
+                _showMessageContextMenu(context, message, details.globalPosition);
+              },
+              onSecondaryTapDown: (TapDownDetails details) { // Desktop/web right-click
+                _showMessageContextMenu(context, message, details.globalPosition);
+              },
+              onLongPress: () {
+                final RenderBox renderBox = context.findRenderObject() as RenderBox;
+                final position = renderBox.localToGlobal(Offset.zero);
+                _showMessageContextMenu(context, message, position);
+              },
+              child: Container(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.6,
+                  minWidth: 200,
+                ),
+                child: Column(
+                  crossAxisAlignment: isSentByMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                  children: [
+                     
+                     
+                    // Video content
+                    Container(
+                      decoration: BoxDecoration(
+                        color: isSentByMe ? const Color(0xFF18365B) : const Color(0xFF404040),
+                        borderRadius: BorderRadius.only(
+                          topLeft: const Radius.circular(20),
+                          topRight: const Radius.circular(20),
+                          bottomLeft: Radius.circular(isSentByMe ? 20 : 5),
+                          bottomRight: Radius.circular(isSentByMe ? 5 : 20),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Video preview/thumbnail
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () async {
+                              final id = message.id;
+                              if (_videoMsgControllers.containsKey(id)) {
+                                final ctrl = _videoMsgControllers[id]!;
+                                if (ctrl.value.isPlaying) {
+                                  await ctrl.pause();
+                                } else {
+                                  await ctrl.play();
+                                }
+                                setState(() {});
+                                return;
+                              }
+                              if (_videoMsgLoading.contains(id)) return;
+                              _videoMsgLoading.add(id);
+                              setState(() {});
+                              try {
+                                VideoPlayerController controller;
+                                if (message.tempVideoPath != null) {
+                                  final f = File(message.tempVideoPath!);
+                                  if (!await f.exists()) throw Exception('Local video missing');
+                                  controller = VideoPlayerController.file(f);
+                                } else if (message.fileId != null) {
+                                  final base = getEnv("API_BASE_URL");
+                                  if (base == null) throw Exception('API_BASE_URL not set');
+                                  final url = base.endsWith('/') ? base + 'uploads/' + message.fileId! : base + '/uploads/' + message.fileId!;
+                                  controller = VideoPlayerController.network(url);
+                                } else {
+                                  throw Exception('No video source');
+                                }
+                                await controller.initialize();
+                                _videoMsgControllers[id] = controller;
+                                _videoMsgChewie[id] = ChewieController(
+                                  videoPlayerController: controller,
+                                  autoPlay: true,
+                                  looping: false,
+                                  allowFullScreen: true,
+                                  allowMuting: true,
+                                  fullScreenByDefault: true,
+                                  materialProgressColors: ChewieProgressColors(
+                                    playedColor: Colors.blueAccent,
+                                    handleColor: Colors.blue,
+                                    backgroundColor: Colors.white24,
+                                    bufferedColor: Colors.blueGrey,
+                                  ),
+                                );
+                              } catch (e) {
+                                debugPrint('Inline video error: $e');
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('Unable to load video')),
+                                  );
+                                }
+                              } finally {
+                                _videoMsgLoading.remove(id);
+                                if (mounted) setState(() {});
+                              }
+                            },
+                            child: Container(
+                            width: double.infinity,
+                            height: 200,
+                            decoration: BoxDecoration(
+                              color: Colors.black,
+                              borderRadius: BorderRadius.only(
+                                topLeft: const Radius.circular(20),
+                                topRight: const Radius.circular(20),
+                                bottomLeft: Radius.circular(message.caption?.isNotEmpty == true ? 0 : (isSentByMe ? 20 : 5)),
+                                bottomRight: Radius.circular(message.caption?.isNotEmpty == true ? 0 : (isSentByMe ? 5 : 20)),
+                              ),
+                            ),
+                            child: Stack(
+                              children: [
+                                // Video area: if initialized show player else placeholder
+                                ClipRRect(
+                                  borderRadius: BorderRadius.only(
+                                    topLeft: const Radius.circular(20),
+                                    topRight: const Radius.circular(20),
+                                    bottomLeft: Radius.circular(message.caption?.isNotEmpty == true ? 0 : (isSentByMe ? 20 : 5)),
+                                    bottomRight: Radius.circular(message.caption?.isNotEmpty == true ? 0 : (isSentByMe ? 5 : 20)),
+                                  ),
+                                  child: _videoMsgChewie.containsKey(message.id)
+                                      ? Chewie(controller: _videoMsgChewie[message.id]!)
+                                      : Container(
+                                          color: Colors.black87,
+                                          child: Center(
+                                            child: _videoMsgLoading.contains(message.id)
+                                                ? const CircularProgressIndicator(color: Colors.white)
+                                                : Column(
+                                                    mainAxisAlignment: MainAxisAlignment.center,
+                                                    children: [
+                                                      const Icon(Icons.videocam, color: Colors.white70, size: 40),
+                                                      const SizedBox(height: 8),
+                                                      Text(
+                                                        tempVideoPath != null
+                                                            ? 'Local Video'
+                                                            : (fileId != null ? 'Video Message' : 'No Source'),
+                                                        style: const TextStyle(color: Colors.white70, fontSize: 14),
+                                                      ),
+                                                    ],
+                                                  ),
+                                          ),
+                                        ),
+                                ),
+                                if (!_videoMsgChewie.containsKey(message.id))
+                                  Center(
+                                    child: Container(
+                                      width: 60,
+                                      height: 60,
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withOpacity(0.55),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(Icons.play_arrow, color: Colors.white, size: 36),
+                                    ),
+                                  ),
+                                if (_videoMsgChewie.containsKey(message.id))
+                                  Positioned(
+                                    top: 8,
+                                    right: 8,
+                                    child: GestureDetector(
+                                      onTap: () async {
+                                        final vc = _videoMsgControllers[message.id];
+                                        if (vc != null) {
+                                          if (vc.value.isPlaying) {
+                                            await vc.pause();
+                                          } else {
+                                            await vc.play();
+                                          }
+                                          setState(() {});
+                                        }
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.all(6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.55),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Icon(
+                                          _videoMsgControllers[message.id]?.value.isPlaying == true
+                                              ? Icons.pause
+                                              : Icons.play_arrow,
+                                          color: Colors.white,
+                                          size: 18,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                // Video duration indicator (top right)
+                                Positioned(
+                                  top: 8,
+                                  right: 8,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withOpacity(0.7),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.videocam,
+                                          color: Colors.white,
+                                          size: 12,
+                                        ),
+                                        SizedBox(width: 2),
+                                        Text(
+                                          'VIDEO',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+            ),
+                          // Caption
+                          (message.caption?.isNotEmpty ?? false)
+                              ? Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Text(
+                                    message.caption!,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                )
+                              : const SizedBox.shrink(),
+                        ],
+                      ),
+                    ),
+                    // Timestamp and status
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4, left: 4, right: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            message.createdAt.toIso8601String().substring(11, 16),
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.6),
+                              fontSize: 11,
+                            ),
+                          ),
+                          if (isSentByMe) ...[
+                            const SizedBox(width: 4),
+                            Icon(
+                              message.isRead
+                                  ? Icons.done_all
+                                  : message.isDelivered
+                                      ? Icons.done_all
+                                      : Icons.done,
+                              color: message.isRead ? Colors.blue : Colors.white.withOpacity(0.6),
+                              size: 16,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (isSentByMe) const SizedBox(width: 10),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMediaPicker() {
     return Container(
       height: MediaQuery.of(context).size.height * 0.7,
@@ -2077,8 +2560,8 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         //   ),
         // ),
         
-        // Copy Media option (for image/audio messages)
-        if (message.type == 'PHOTO' || message.type == 'AUDIO')
+        // Copy Media option (for media messages)
+        if (_isMediaMessage(message.type))
           PopupMenuItem(
             value: 'copy_media',
             child: Row(
@@ -2110,7 +2593,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
           ),
         
         // Save As option (for media messages)
-        if (message.type == 'PHOTO' || message.type == 'AUDIO')
+        if (_isMediaMessage(message.type))
           PopupMenuItem(
             value: 'save_as',
             child: Row(
@@ -2249,13 +2732,93 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   }
 
   // Copy media to clipboard
-  void _copyMedia(Message message) {
-    if (message.type == 'PHOTO') {
-      _showSnackBar('Image copied to clipboard');
-      // TODO: Implement actual image copy to clipboard
-    } else if (message.type == 'AUDIO') {
-      _showSnackBar('Audio file copied to clipboard');
-      // TODO: Implement actual audio copy to clipboard
+  Future<void> _copyMedia(Message message) async {
+    switch (message.type) {
+      case 'PHOTO':
+      case 'IMAGE':
+        await _copyImageToClipboard(message);
+        break;
+      case 'AUDIO':
+      case 'VOICE':
+      case 'VOICE_NOTE':
+        await _copyAudioToClipboard(message);
+        break;
+      case 'VIDEO':
+        await _copyVideoToClipboard(message);
+        break;
+      case 'DOCUMENT':
+      case 'FILE':
+        await _copyDocumentToClipboard(message);
+        break;
+      default:
+        _showSnackBar('Media type not supported for copying');
+    }
+  }
+
+  // Copy image to clipboard (copy URL or file path)
+  Future<void> _copyImageToClipboard(Message message) async {
+    try {
+      if (message.fileId != null) {
+        final imageUrl = '${getEnv("API_BASE_URL")}/uploads/${message.fileId}';
+        await Clipboard.setData(ClipboardData(text: imageUrl));
+        _showSnackBar('Image URL copied to clipboard');
+      } else if (message.tempImagePath != null) {
+        await Clipboard.setData(ClipboardData(text: message.tempImagePath!));
+        _showSnackBar('Image path copied to clipboard');
+      } else {
+        _showSnackBar('No image to copy');
+      }
+    } catch (e) {
+      print('Error copying image: $e');
+      _showSnackBar('Failed to copy image');
+    }
+  }
+
+  // Copy audio to clipboard (copy URL)
+  Future<void> _copyAudioToClipboard(Message message) async {
+    try {
+      if (message.fileId != null) {
+        final audioUrl = '${getEnv("API_BASE_URL")}/uploads/${message.fileId}';
+        await Clipboard.setData(ClipboardData(text: audioUrl));
+        _showSnackBar('Audio URL copied to clipboard');
+      } else {
+        _showSnackBar('No audio to copy');
+      }
+    } catch (e) {
+      print('Error copying audio: $e');
+      _showSnackBar('Failed to copy audio');
+    }
+  }
+
+  // Copy video to clipboard (copy URL)
+  Future<void> _copyVideoToClipboard(Message message) async {
+    try {
+      if (message.fileId != null) {
+        final videoUrl = '${getEnv("API_BASE_URL")}/uploads/${message.fileId}';
+        await Clipboard.setData(ClipboardData(text: videoUrl));
+        _showSnackBar('Video URL copied to clipboard');
+      } else {
+        _showSnackBar('No video to copy');
+      }
+    } catch (e) {
+      print('Error copying video: $e');
+      _showSnackBar('Failed to copy video');
+    }
+  }
+
+  // Copy document to clipboard (copy URL)
+  Future<void> _copyDocumentToClipboard(Message message) async {
+    try {
+      if (message.fileId != null) {
+        final documentUrl = '${getEnv("API_BASE_URL")}/uploads/${message.fileId}';
+        await Clipboard.setData(ClipboardData(text: documentUrl));
+        _showSnackBar('Document URL copied to clipboard');
+      } else {
+        _showSnackBar('No document to copy');
+      }
+    } catch (e) {
+      print('Error copying document: $e');
+      _showSnackBar('Failed to copy document');
     }
   }
 
@@ -2273,14 +2836,286 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   }
 
   // Save media as file
-  void _saveMediaAs(Message message) {
-    if (message.type == 'PHOTO') {
-      _showSnackBar('Saving image...');
-      // TODO: Implement image download and save
-    } else if (message.type == 'AUDIO') {
-      _showSnackBar('Saving audio file...');
-      // TODO: Implement audio download and save
+  Future<void> _saveMediaAs(Message message) async {
+    switch (message.type) {
+      case 'PHOTO':
+      case 'IMAGE':
+        await _saveImageToGallery(message);
+        break;
+      case 'AUDIO':
+      case 'VOICE':
+      case 'VOICE_NOTE':
+        await _saveAudioToDevice(message);
+        break;
+      case 'VIDEO':
+        await _saveVideoToGallery(message);
+        break;
+      case 'DOCUMENT':
+      case 'FILE':
+        await _saveDocumentToDevice(message);
+        break;
+      default:
+        _showSnackBar('Media type not supported for saving');
     }
+  }
+
+  // Save image to gallery using saver_gallery
+  Future<void> _saveImageToGallery(Message message) async {
+    try {
+      _showSnackBar('Saving image...');
+      
+      // Request storage permission
+      final permission = await PhotoManager.requestPermissionExtend();
+      if (permission.isAuth == false) {
+        _showSnackBar('Storage permission denied');
+        return;
+      }
+
+      if (message.fileId != null) {
+        // Download image from network using HttpClient
+        final imageUrl = '${getEnv("API_BASE_URL")}/uploads/${message.fileId}';
+        
+        final client = HttpClient();
+        try {
+          final request = await client.getUrl(Uri.parse(imageUrl));
+          final response = await request.close();
+          
+          if (response.statusCode == 200) {
+            final bytes = await consolidateHttpClientResponseBytes(response);
+            
+            // Save to gallery using photo_manager
+            await PhotoManager.editor.saveImage(
+              bytes,
+              filename: "chat_image_${DateTime.now().millisecondsSinceEpoch}.jpg",
+            );
+            
+            _showSnackBar('Image saved to gallery successfully');
+          } else {
+            _showSnackBar('Failed to download image');
+          }
+        } finally {
+          client.close();
+        }
+      } else if (message.tempImagePath != null) {
+        // Save local image file
+        final file = File(message.tempImagePath!);
+        if (await file.exists()) {
+          await PhotoManager.editor.saveImageWithPath(
+            message.tempImagePath!,
+          );
+          
+          _showSnackBar('Image saved to gallery successfully');
+        } else {
+          _showSnackBar('Image file not found');
+        }
+      } else {
+        _showSnackBar('No image to save');
+      }
+    } catch (e) {
+      print('Error saving image: $e');
+      _showSnackBar('Failed to save image: $e');
+    }
+  }
+
+  // Save audio to device storage
+  Future<void> _saveAudioToDevice(Message message) async {
+    try {
+      _showSnackBar('Saving audio...');
+      
+      // Request storage permission
+      final permission = await Permission.storage.request();
+      if (permission != PermissionStatus.granted) {
+        _showSnackBar('Storage permission denied');
+        return;
+      }
+
+      if (message.fileId != null) {
+        // Download audio from network and save to temporary file first
+        final audioUrl = '${getEnv("API_BASE_URL")}/uploads/${message.fileId}';
+        
+        
+        try {
+          
+          var tempDir = await getTemporaryDirectory();
+          String audioPath = "${tempDir.path}/${message.fileId}";
+          await Dio().download(
+            audioUrl,
+            audioPath,
+          );
+    
+          final result = await SaverGallery.saveFile(
+            filePath: audioPath,
+            skipIfExists: true,
+            fileName: message.fileId!,
+            // androidRelativePath: "Downloads",
+          );
+          print("Save result: $result");
+
+        } finally {
+          
+            
+        }
+      } else {
+        _showSnackBar('No audio file to save');
+      }
+    } catch (e) {
+      print('Error saving audio: $e');
+      _showSnackBar('Failed to save audio: $e');
+    }
+  }
+
+  // Save video to device gallery
+  Future<void> _saveVideoToGallery(Message message) async {
+    try {
+      _showSnackBar('Saving video...');
+      
+      // Request storage permission
+      final permission = await PhotoManager.requestPermissionExtend();
+      if (permission.isAuth == false) {
+        _showSnackBar('Storage permission denied');
+        return;
+      }
+
+      if (message.fileId != null) {
+        // Download video from network using HttpClient
+        final videoUrl = '${getEnv("API_BASE_URL")}/uploads/${message.fileId}';
+        
+        final client = HttpClient();
+        try {
+          final request = await client.getUrl(Uri.parse(videoUrl));
+          final response = await request.close();
+          
+          if (response.statusCode == 200) {
+            // Save to temporary file first
+            final tempDir = await getTemporaryDirectory();
+            final tempFilePath = '${tempDir.path}/chat_video_${DateTime.now().millisecondsSinceEpoch}.mp4';
+            final tempFile = File(tempFilePath);
+            
+            // Write response to temporary file
+            final sink = tempFile.openWrite();
+            await sink.addStream(response);
+            await sink.close();
+            
+            // Save video to gallery using photo_manager
+            await PhotoManager.editor.saveVideo(
+              tempFile,
+            );
+            
+            _showSnackBar('Video saved to gallery successfully');
+            
+            // Clean up temporary file
+            if (await tempFile.exists()) {
+              await tempFile.delete();
+            }
+          } else {
+            _showSnackBar('Failed to download video');
+          }
+        } finally {
+          client.close();
+        }
+      } else {
+        _showSnackBar('No video file to save');
+      }
+    } catch (e) {
+      print('Error saving video: $e');
+      _showSnackBar('Failed to save video: $e');
+    }
+  }
+
+  // Save document to device storage
+  Future<void> _saveDocumentToDevice(Message message) async {
+    try {
+      _showSnackBar('Saving document...');
+      
+      // Request storage permission
+      final permission = await Permission.storage.request();
+      if (permission != PermissionStatus.granted) {
+        _showSnackBar('Storage permission denied');
+        return;
+      }
+
+      if (message.fileId != null) {
+        // Download document from network using HttpClient
+        final documentUrl = '${getEnv("API_BASE_URL")}/uploads/${message.fileId}';
+        
+        final client = HttpClient();
+        try {
+          final request = await client.getUrl(Uri.parse(documentUrl));
+          final response = await request.close();
+          
+          if (response.statusCode == 200) {
+            // Determine file extension from URL or use default
+            String fileExtension = _getFileExtension(documentUrl);
+            if (fileExtension.isEmpty) {
+              fileExtension = 'pdf'; // Default to PDF
+            }
+            
+            // Save document to Downloads folder
+            final downloadsDir = await getDownloadsDirectory();
+            if (downloadsDir != null) {
+              final finalPath = '${downloadsDir.path}/chat_document_${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
+              final file = File(finalPath);
+              final sink = file.openWrite();
+              await sink.addStream(response);
+              await sink.close();
+              _showSnackBar('Document saved to Downloads folder successfully');
+            } else {
+              // Fallback to external storage directory
+              final externalDir = await getExternalStorageDirectory();
+              if (externalDir != null) {
+                final finalPath = '${externalDir.path}/Download/chat_document_${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
+                final downloadDir = Directory('${externalDir.path}/Download');
+                if (!await downloadDir.exists()) {
+                  await downloadDir.create(recursive: true);
+                }
+                final file = File(finalPath);
+                final sink = file.openWrite();
+                await sink.addStream(response);
+                await sink.close();
+                _showSnackBar('Document saved successfully');
+              } else {
+                _showSnackBar('Could not find Downloads folder');
+              }
+            }
+          } else {
+            _showSnackBar('Failed to download document');
+          }
+        } finally {
+          client.close();
+        }
+      } else {
+        _showSnackBar('No document to save');
+      }
+    } catch (e) {
+      print('Error saving document: $e');
+      _showSnackBar('Failed to save document: $e');
+    }
+  }
+
+  // Helper method to extract file extension from URL
+  String _getFileExtension(String url) {
+    try {
+      final uri = Uri.parse(url);
+      final path = uri.path;
+      final lastDotIndex = path.lastIndexOf('.');
+      if (lastDotIndex != -1 && lastDotIndex < path.length - 1) {
+        return path.substring(lastDotIndex + 1).toLowerCase();
+      }
+    } catch (e) {
+      print('Error extracting file extension: $e');
+    }
+    return '';
+  }
+
+  // Helper method to check if message type is a media message
+  bool _isMediaMessage(String messageType) {
+    const mediaTypes = [
+      'PHOTO', 'IMAGE',
+      'AUDIO', 'VOICE', 'VOICE_NOTE',
+      'VIDEO',
+      'DOCUMENT', 'FILE'
+    ];
+    return mediaTypes.contains(messageType);
   }
 
   // Pin message functionality
@@ -2650,6 +3485,104 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       },
     );
   }
+
+  Widget _buildFullscreenMediaPreview() {
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black,
+        child: Stack(
+          children: [
+            // Media content
+            Center(
+              child: _previewMediaType == 'image' && _pickedImage != null
+                  ? InteractiveViewer(
+                      child: Image.file(
+                        File(_pickedImage!.path),
+                        fit: BoxFit.contain,
+                      ),
+                    )
+                  : _previewMediaType == 'video' && _pickedVideo != null
+                      ? (_videoPreviewError
+                          ? Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: const [
+                                Icon(Icons.error_outline, color: Colors.red, size: 64),
+                                SizedBox(height: 12),
+                                Text('Unable to load video', style: TextStyle(color: Colors.white70)),
+                              ],
+                            )
+                          : (_previewChewieController != null && _previewVideoController != null
+                              ? AspectRatio(
+                                  aspectRatio: _previewVideoController!.value.aspectRatio,
+                                  child: Chewie(controller: _previewChewieController!),
+                                )
+                              : Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: const [
+                                    CircularProgressIndicator(color: Colors.white),
+                                    SizedBox(height: 12),
+                                    Text('Loading video...', style: TextStyle(color: Colors.white70)),
+                                  ],
+                                )))
+                      : Container(),
+            ),
+            // Top controls
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withOpacity(0.7),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      GestureDetector(
+                        onTap: _closeFullscreenPreview,
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.5),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        _previewMediaType == 'image' ? 'Image Preview' : 'Video Preview',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const Spacer(),
+                      const SizedBox(width: 40), // Balance the close button
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _MediaPickerContent extends StatefulWidget {
@@ -2799,7 +3732,7 @@ class _GalleryContentState extends State<_GalleryContent> {
       // Request photo library permission
       if (kIsWeb) {
         FilePickerResult? result =
-            await FilePicker.platform.pickFiles(type: FileType.image);
+            await FilePicker.platform.pickFiles(type: FileType.any);
 
         if (result != null) {
           String fileName = result.files.first.name;
@@ -2808,6 +3741,8 @@ class _GalleryContentState extends State<_GalleryContent> {
         }
       } else {
         final permission = await Permission.photos.request();
+        await Permission.audio.request();
+        await Permission.videos.request();
         print("Permission status: $permission");
 
         if (permission.isGranted) {
@@ -2836,7 +3771,7 @@ class _GalleryContentState extends State<_GalleryContent> {
     try {
       // Get the photo library
       final List<AssetPathEntity> albums = await PhotoManager.getAssetPathList(
-        type: RequestType.image,
+        type: RequestType.fromTypes(  [RequestType.image, RequestType.video, RequestType.common]),
         onlyAll: true,
       );
 
@@ -3075,7 +4010,14 @@ class _GalleryContentState extends State<_GalleryContent> {
                           final parentState = context.findAncestorStateOfType<_ChatScreenPageState>();
                           if (parentState != null) {
                             parentState.setState(() {
-                              parentState._pickedImage = XFile(file.path);
+                              // Check if the asset is a video or image
+                              if (asset.type == AssetType.video) {
+                                parentState._pickedVideo = XFile(file.path);
+                                parentState._pickedImage = null;
+                              } else {
+                                parentState._pickedImage = XFile(file.path);
+                                parentState._pickedVideo = null;
+                              }
                               parentState._showMediaPicker = false;
                             });
                           }
@@ -3128,6 +4070,56 @@ class _GalleryContentState extends State<_GalleryContent> {
                                   );
                                 },
                               ),
+                              // Video indicator overlay
+                              if (asset.type == AssetType.video)
+                                Positioned(
+                                  bottom: 4,
+                                  right: 4,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withOpacity(0.7),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.play_arrow,
+                                          color: Colors.white,
+                                          size: 12,
+                                        ),
+                                        const SizedBox(width: 2),
+                                        FutureBuilder<Duration?>(
+                                          future: Future.value(asset.videoDuration),
+                                          builder: (context, snapshot) {
+                                            if (snapshot.hasData && snapshot.data != null) {
+                                              final duration = snapshot.data!;
+                                              final minutes = duration.inMinutes;
+                                              final seconds = duration.inSeconds % 60;
+                                              return Text(
+                                                '${minutes.toString().padLeft(1, '0')}:${seconds.toString().padLeft(2, '0')}',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              );
+                                            }
+                                            return const Text(
+                                              '0:00',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
                               // Selection overlay
                               Positioned(
                                 top: 4,
