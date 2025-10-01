@@ -1,3 +1,5 @@
+import 'package:flutter_app/app/models/media_response.dart';
+
 import '/app/controllers/home_controller.dart';
 import '/app/models/chat.dart';
 import '/app/models/user.dart';
@@ -35,6 +37,9 @@ final Map<Type, dynamic> modelDecoders = {
   CallResponse: (data) => CallResponse.fromJson(data),
   
   UploadAvatarResponse: (data) => UploadAvatarResponse.fromJson(data),
+  List<MediaResponse>: (data) =>
+    List.from(data).map((json) => MediaResponse.fromJson(json)).toList(),
+  
   // To handle nullable lists, decode as List<SearchUser> and handle nulls outside the decoder.
   // SearchCharResponse: (data) => SearchCharResponse.fromJson(data),
 };

@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/resources/pages/video_call_page.dart';
 import 'package:flutter_app/resources/pages/voice_call_page.dart';
 import 'package:nylo_framework/nylo_framework.dart';
+import 'package:flutter_app/app/networking/chat_api_service.dart';
+import 'package:flutter_app/app/models/media_response.dart';
+import 'package:chewie/chewie.dart';
+import 'package:video_player/video_player.dart';
 
 class ProfileDetailsPage extends NyStatefulWidget {
   static RouteView path = ("/profile-details", (_) => ProfileDetailsPage());
@@ -17,12 +21,18 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
   String _userName = '';
   String? _userImage;
   String defaultImage = 'image2.png';
+  int? _chatId;
 
-  final List<String> _mediaImages = [
-    'image40.jpg',
-    'image50.jpg',
-    'image60.jpg'
-  ];
+  // Remote media state
+  bool _isLoadingMedia = false;
+  bool _mediaError = false;
+  List<MediaResponse> _mediaItems = [];
+  bool _mediaFetchAttempted = false; // prevents repeated fetch loops
+  // Video preview controllers (for grid thumbnails)
+  final Map<String, VideoPlayerController> _videoThumbControllers = {};
+  final Set<String> _videoThumbInitializing = {};
+  final Set<String> _videoThumbErrors = {};
+
 
   @override
   get init => () {
@@ -46,11 +56,45 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
     setState(() {
       _userName = navigationData?['userName'] ?? 'User Name';
       _userImage = navigationData?['userImage'];
+      _chatId = navigationData?['chatId'];
     });
+
+    if (_chatId != null) {
+      _fetchChatMedia();
+    }
+  }
+
+  Future<void> _fetchChatMedia() async {
+    if (_chatId == null) return;
+    if (_mediaFetchAttempted) return; // already fetched or in progress
+    _mediaFetchAttempted = true;
+    setState(() {
+      _isLoadingMedia = true;
+      _mediaError = false;
+    });
+    try {
+      final list = await ChatApiService().getChatMedia(_chatId!);
+      print("Fetched media items count: ${list?.length ?? 0}");
+      _mediaItems = list ?? [];
+    } catch (e) {
+      debugPrint('Error fetching chat media: $e');
+      _mediaError = true;
+      _mediaFetchAttempted = false; // allow retry if it failed
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingMedia = false;
+        });
+      }
+    }
   }
 
   @override
   void dispose() {
+    // Dispose video thumbnail controllers
+    for (final c in _videoThumbControllers.values) {
+      c.dispose();
+    }
     _scrollController.dispose();
     super.dispose();
   }
@@ -445,27 +489,228 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
   Widget _buildMediaGrid() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      child: GridView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          crossAxisSpacing: 2,
-          mainAxisSpacing: 2,
-          childAspectRatio: 1,
+      child: _isLoadingMedia
+          ? _buildMediaLoadingSkeleton()
+          : _mediaError
+              ? _buildMediaError()
+              : _mediaItems.isEmpty
+                  ? _buildEmptyMediaState()
+                  : GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3,
+                        crossAxisSpacing: 2,
+                        mainAxisSpacing: 2,
+                        childAspectRatio: 1,
+                      ),
+                      itemCount: _mediaItems.length,
+                      itemBuilder: (context, index) {
+                        final media = _mediaItems[index];
+                        final base = getEnv("API_BASE_URL") ?? '';
+                        final baseNormalized = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
+                        final mediaUrl = '$baseNormalized/uploads/${media.fileId}';
+                        final isVideo = media.type.toUpperCase() == 'VIDEO';
+                        return GestureDetector(
+                          onTap: () {
+                            if (isVideo) {
+                              _openVideoViewer(mediaUrl);
+                            } else {
+                              _openImageViewer(mediaUrl);
+                            }
+                          },
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                if (!isVideo)
+                                  Image.network(
+                                    mediaUrl,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      color: const Color(0xFF1C212C),
+                                      child: const Icon(Icons.broken_image, color: Colors.grey),
+                                    ),
+                                  )
+                                else
+                                  _buildVideoThumbnail(media.fileId, mediaUrl),
+                                if (isVideo)
+                                  Positioned.fill(
+                                    child: Container(
+                                      color: Colors.black26,
+                                      child: const Center(
+                                        child: Icon(Icons.play_circle_fill, color: Colors.white70, size: 40),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+    );
+  }
+
+  Widget _buildVideoThumbnail(String fileId, String url) {
+    // If error occurred
+    if (_videoThumbErrors.contains(fileId)) {
+      return Container(
+        color: const Color(0xFF1C212C),
+        child: const Icon(Icons.broken_image, color: Colors.grey),
+      );
+    }
+
+    // Existing initialized controller
+    final existing = _videoThumbControllers[fileId];
+    if (existing != null && existing.value.isInitialized) {
+      final aspect = existing.value.aspectRatio == 0 ? 1.0 : existing.value.aspectRatio;
+      return FittedBox(
+        fit: BoxFit.cover,
+        clipBehavior: Clip.hardEdge,
+        child: SizedBox(
+          width: 100 * aspect,
+            height: 100,
+            child: VideoPlayer(existing),
         ),
-        itemCount: 20,
-        itemBuilder: (context, index) {
-          return Container(
-            child: Image.asset(
-              _mediaImages[index % _mediaImages.length],
-              fit: BoxFit.cover,
-              width: double.infinity,
-              height: double.infinity,
-            ).localAsset(),
-          );
-        },
+      );
+    }
+
+    // Kick off initialization if not already
+    if (!_videoThumbInitializing.contains(fileId)) {
+      _videoThumbInitializing.add(fileId);
+      _initVideoThumb(fileId, url);
+    }
+
+    // Loading placeholder
+    return Container(
+      color: const Color(0xFF1C212C),
+      child: const Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
+        ),
       ),
+    );
+  }
+
+  Future<void> _initVideoThumb(String fileId, String url) async {
+    try {
+      final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+      await controller.initialize();
+      // Pause to show only first frame
+      controller.pause();
+      if (!mounted) {
+        controller.dispose();
+        return;
+      }
+      setState(() {
+        _videoThumbControllers[fileId] = controller;
+      });
+    } catch (e) {
+      debugPrint('Video thumbnail init failed for $fileId: $e');
+      if (mounted) {
+        setState(() {
+          _videoThumbErrors.add(fileId);
+        });
+      }
+    } finally {
+      _videoThumbInitializing.remove(fileId);
+    }
+  }
+
+  Widget _buildMediaLoadingSkeleton() {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 2,
+        mainAxisSpacing: 2,
+        childAspectRatio: 1,
+      ),
+      itemCount: 9,
+      itemBuilder: (_, __) => Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C212C),
+          borderRadius: BorderRadius.circular(6),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMediaError() {
+    return Column(
+      children: [
+        const SizedBox(height: 40),
+        const Icon(Icons.error_outline, color: Colors.redAccent, size: 40),
+        const SizedBox(height: 12),
+        const Text(
+          'Failed to load media',
+          style: TextStyle(color: Color(0xFFE8E7EA), fontSize: 14),
+        ),
+        const SizedBox(height: 8),
+        TextButton(
+          onPressed: _fetchChatMedia,
+          child: const Text('Retry'),
+        )
+      ],
+    );
+  }
+
+  Widget _buildEmptyMediaState() {
+    return Column(
+      children: const [
+        SizedBox(height: 40),
+        Icon(Icons.image_not_supported, color: Colors.grey, size: 40),
+        SizedBox(height: 12),
+        Text(
+          'No media found yet',
+          style: TextStyle(color: Color(0xFFE8E7EA), fontSize: 14),
+        ),
+      ],
+    );
+  }
+
+  /* Media Viewers */
+  void _openImageViewer(String url) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.9),
+      builder: (_) => GestureDetector(
+        onTap: () => Navigator.of(context).pop(),
+        child: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(
+                child: Image.network(
+                  url,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white70, size: 60),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 40,
+              right: 20,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openVideoViewer(String url) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.9),
+      builder: (_) => _VideoPlayerDialog(videoUrl: url),
     );
   }
 
@@ -699,6 +944,94 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _VideoPlayerDialog extends StatefulWidget {
+  final String videoUrl;
+  const _VideoPlayerDialog({required this.videoUrl});
+
+  @override
+  State<_VideoPlayerDialog> createState() => _VideoPlayerDialogState();
+}
+
+class _VideoPlayerDialogState extends State<_VideoPlayerDialog> {
+  VideoPlayerController? _videoController;
+  ChewieController? _chewieController;
+  bool _initError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    try {
+      final vc = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl));
+      await vc.initialize();
+      final cc = ChewieController(
+        videoPlayerController: vc,
+        autoPlay: true,
+        looping: false,
+        allowFullScreen: false,
+        allowMuting: true,
+        showControlsOnInitialize: true,
+      );
+      if (!mounted) return;
+      setState(() {
+        _videoController = vc;
+        _chewieController = cc;
+      });
+    } catch (e) {
+      debugPrint('Video init error: $e');
+      if (mounted) {
+        setState(() => _initError = true);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _chewieController?.dispose();
+    _videoController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.of(context).pop(),
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Stack(
+          children: [
+            Center(
+              child: _initError
+                  ? const Icon(Icons.error_outline, color: Colors.white70, size: 60)
+                  : (_chewieController == null || !_videoController!.value.isInitialized)
+                      ? const SizedBox(
+                          width: 60,
+                          height: 60,
+                          child: CircularProgressIndicator(color: Colors.white70),
+                        )
+                      : AspectRatio(
+                          aspectRatio: _videoController!.value.aspectRatio,
+                          child: Chewie(controller: _chewieController!),
+                        ),
+            ),
+            Positioned(
+              top: 40,
+              right: 20,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

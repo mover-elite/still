@@ -41,7 +41,6 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   XFile? _pickedImage;
   XFile? _pickedVideo;
   bool _isRecording = false;
-  String? _recordedAudioPath;
   late Record _audioRecorder;
   Timer? _recordingTimer;
   int _recordingDuration = 0;
@@ -51,7 +50,6 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   String _userName = 'Ahmad';
   String? _userImage;
   bool _isOnline = false;
-  bool _isVerified = false;
   Set<int> _typingUsers = {};
 
   String? currentDay; // Track current day for day separators
@@ -61,7 +59,6 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   // WebSocket integration
   StreamSubscription<Map<String, dynamic>>? _wsSubscription;
   StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
-  StreamSubscription<Chat>? _chatSubscription;
 
   bool _isWebSocketConnected = false;
 
@@ -76,11 +73,9 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   Duration _audioDuration = Duration.zero;
 
   // Message interaction state
-  Message? _replyingToMessage;
   final TextEditingController _textController = TextEditingController();
   final FocusNode _textFocusNode = FocusNode();
   Set<int> _selectedMessages = {};
-  bool _isSelectionMode = false;
 
   // Media preview state
   bool _showFullscreenPreview = false;
@@ -90,9 +85,12 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   ChewieController? _previewChewieController;
   bool _videoPreviewError = false;
   // Inline video message state
-  final Map<int, VideoPlayerController> _videoMsgControllers = {};
-  final Map<int, ChewieController> _videoMsgChewie = {};
-  final Set<int> _videoMsgLoading = {};
+  // (Deprecated inline playback maps kept for potential future revert; currently fullscreen playback only)
+  final Map<int, VideoPlayerController> _videoMsgControllers = {}; // unused now
+  final Map<int, ChewieController> _videoMsgChewie = {}; // unused now
+  final Set<int> _videoThumbInitializing = {};
+  final Map<int, VideoPlayerController> _videoThumbControllers = {}; // lightweight controllers for thumbnails
+  final Set<int> _videoThumbErrors = {};
 
   @override
   get init => () async {
@@ -150,7 +148,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                 _userName = _chat!.name;
                 _userImage = getChatAvatar(_chat!, getEnv("API_BASE_URL"));
                 _isOnline = false;
-                _isVerified = false;
+                // _isVerified = false; (flag removed)
                 _typingUsers = _chat!.typingUsers;
               }
             }
@@ -541,17 +539,6 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
     }
   }
 
-  Future<void> _stopAudioMessage() async {
-    if (_audioPlayer != null) {
-      await _audioPlayer!.stop();
-      setState(() {
-        _isAudioPlaying = false;
-        _playingMessageId = null;
-        _audioPosition = Duration.zero;
-      });
-    }
-  }
-
   Future<void> _pickFileOnWeb() async {
     FilePickerResult? result =
         await FilePicker.platform.pickFiles(type: FileType.image);
@@ -577,22 +564,6 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
     }
   }
 
-  Future<void> _pickImageFromGallery() async {
-    try {
-      final XFile? image = await ImagePicker().pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 80,
-      );
-      if (image != null) {
-        setState(() {
-          _pickedImage = image;
-          _showMediaPicker = false;
-        });
-      }
-    } catch (e) {
-      print('Error picking image from gallery: $e');
-    }
-  }
 
   void _closeImagePreview() {
     setState(() {
@@ -697,62 +668,6 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
     });
   }
 
-  Future<void> _openVideoPlayerDialog({String? filePath, String? networkUrl}) async {
-    VideoPlayerController? videoController;
-    ChewieController? chewieController;
-    
-    try {
-      if (filePath == null && networkUrl == null) return;
-      if (filePath != null) {
-        final file = File(filePath);
-        if (!await file.exists()) throw Exception('Local video not found');
-        videoController = VideoPlayerController.file(file);
-      } else {
-        // Using network() for broader compatibility in some plugin versions
-        videoController = VideoPlayerController.network(networkUrl!);
-      }
-      await videoController.initialize();
-      chewieController = ChewieController(
-        videoPlayerController: videoController,
-        autoPlay: true,
-        looping: false,
-        allowFullScreen: true,
-        allowMuting: true,
-        materialProgressColors: ChewieProgressColors(
-          playedColor: Colors.blueAccent,
-          handleColor: Colors.blue,
-          backgroundColor: Colors.white24,
-          bufferedColor: Colors.blueGrey,
-        ),
-      );
-
-      if (!mounted) return;
-      await showDialog(
-        context: context,
-        barrierDismissible: true,
-        builder: (_) => Dialog(
-          backgroundColor: Colors.black,
-          insetPadding: const EdgeInsets.all(12),
-          child: AspectRatio(
-            aspectRatio: videoController!.value.aspectRatio == 0
-                ? 16 / 9
-                : videoController.value.aspectRatio,
-            child: Chewie(controller: chewieController!),
-          ),
-        ),
-      );
-    } catch (e) {
-      debugPrint('Error opening video player: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Unable to play video')),
-        );
-      }
-    } finally {
-  chewieController?.dispose();
-      await videoController?.dispose();
-    }
-  }
 
   void _sendMessage() async {
 
@@ -947,7 +862,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         setState(() {
           _isRecording = true;
           _recordingDuration = 0;
-          _recordedAudioPath = recordingPath;
+          // _recordedAudioPath = recordingPath; (removed field)
         });
         
         // Start recording timer
@@ -990,7 +905,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       
       setState(() {
         _recordingDuration = 0;
-        _recordedAudioPath = null;
+  // _recordedAudioPath = null; (removed field)
       });
     } catch (e) {
       print('Error stopping recording: $e');
@@ -1007,7 +922,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       setState(() {
         _isRecording = false;
         _recordingDuration = 0;
-        _recordedAudioPath = null;
+  // _recordedAudioPath = null; (removed field)
       });
       
       print('Recording cancelled');
@@ -2159,8 +2074,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
 
   Widget _buildVideoMessage(Message message) {
     final bool isSentByMe = _currentUserId != null && message.senderId == _currentUserId;
-    final String? fileId = message.fileId;
-    final String? tempVideoPath = message.tempVideoPath;
+  // fileId/tempVideoPath not needed in new thumbnail+fullscreen approach
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -2210,61 +2124,8 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                           GestureDetector(
                             behavior: HitTestBehavior.opaque,
                             onTap: () async {
-                              final id = message.id;
-                              if (_videoMsgControllers.containsKey(id)) {
-                                final ctrl = _videoMsgControllers[id]!;
-                                if (ctrl.value.isPlaying) {
-                                  await ctrl.pause();
-                                } else {
-                                  await ctrl.play();
-                                }
-                                setState(() {});
-                                return;
-                              }
-                              if (_videoMsgLoading.contains(id)) return;
-                              _videoMsgLoading.add(id);
-                              setState(() {});
-                              try {
-                                VideoPlayerController controller;
-                                if (message.tempVideoPath != null) {
-                                  final f = File(message.tempVideoPath!);
-                                  if (!await f.exists()) throw Exception('Local video missing');
-                                  controller = VideoPlayerController.file(f);
-                                } else if (message.fileId != null) {
-                                  final base = getEnv("API_BASE_URL");
-                                  if (base == null) throw Exception('API_BASE_URL not set');
-                                  final url = base.endsWith('/') ? base + 'uploads/' + message.fileId! : base + '/uploads/' + message.fileId!;
-                                  controller = VideoPlayerController.network(url);
-                                } else {
-                                  throw Exception('No video source');
-                                }
-                                await controller.initialize();
-                                _videoMsgControllers[id] = controller;
-                                _videoMsgChewie[id] = ChewieController(
-                                  videoPlayerController: controller,
-                                  autoPlay: true,
-                                  looping: false,
-                                  allowFullScreen: true,
-                                  allowMuting: true,
-                                  fullScreenByDefault: true,
-                                  materialProgressColors: ChewieProgressColors(
-                                    playedColor: Colors.blueAccent,
-                                    handleColor: Colors.blue,
-                                    backgroundColor: Colors.white24,
-                                    bufferedColor: Colors.blueGrey,
-                                  ),
-                                );
-                              } catch (e) {
-                                debugPrint('Inline video error: $e');
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Unable to load video')),
-                                  );
-                                }
-                              } finally {
-                                _videoMsgLoading.remove(id);
-                                if (mounted) setState(() {});
-                              }
+                              // Open fullscreen preview instead of inline playback
+                              await _openFullscreenVideo(message);
                             },
                             child: Container(
                             width: double.infinity,
@@ -2288,73 +2149,19 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                                     bottomLeft: Radius.circular(message.caption?.isNotEmpty == true ? 0 : (isSentByMe ? 20 : 5)),
                                     bottomRight: Radius.circular(message.caption?.isNotEmpty == true ? 0 : (isSentByMe ? 5 : 20)),
                                   ),
-                                  child: _videoMsgChewie.containsKey(message.id)
-                                      ? Chewie(controller: _videoMsgChewie[message.id]!)
-                                      : Container(
-                                          color: Colors.black87,
-                                          child: Center(
-                                            child: _videoMsgLoading.contains(message.id)
-                                                ? const CircularProgressIndicator(color: Colors.white)
-                                                : Column(
-                                                    mainAxisAlignment: MainAxisAlignment.center,
-                                                    children: [
-                                                      const Icon(Icons.videocam, color: Colors.white70, size: 40),
-                                                      const SizedBox(height: 8),
-                                                      Text(
-                                                        tempVideoPath != null
-                                                            ? 'Local Video'
-                                                            : (fileId != null ? 'Video Message' : 'No Source'),
-                                                        style: const TextStyle(color: Colors.white70, fontSize: 14),
-                                                      ),
-                                                    ],
-                                                  ),
-                                          ),
-                                        ),
+                                  child: _buildVideoThumbnail(message),
                                 ),
-                                if (!_videoMsgChewie.containsKey(message.id))
-                                  Center(
-                                    child: Container(
-                                      width: 60,
-                                      height: 60,
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withOpacity(0.55),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: const Icon(Icons.play_arrow, color: Colors.white, size: 36),
+                                Center(
+                                  child: Container(
+                                    width: 60,
+                                    height: 60,
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withOpacity(0.55),
+                                      shape: BoxShape.circle,
                                     ),
+                                    child: const Icon(Icons.play_arrow, color: Colors.white, size: 36),
                                   ),
-                                if (_videoMsgChewie.containsKey(message.id))
-                                  Positioned(
-                                    top: 8,
-                                    right: 8,
-                                    child: GestureDetector(
-                                      onTap: () async {
-                                        final vc = _videoMsgControllers[message.id];
-                                        if (vc != null) {
-                                          if (vc.value.isPlaying) {
-                                            await vc.pause();
-                                          } else {
-                                            await vc.play();
-                                          }
-                                          setState(() {});
-                                        }
-                                      },
-                                      child: Container(
-                                        padding: const EdgeInsets.all(6),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black.withOpacity(0.55),
-                                          borderRadius: BorderRadius.circular(6),
-                                        ),
-                                        child: Icon(
-                                          _videoMsgControllers[message.id]?.value.isPlaying == true
-                                              ? Icons.pause
-                                              : Icons.play_arrow,
-                                          color: Colors.white,
-                                          size: 18,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
+                                ),
                                 // Video duration indicator (top right)
                                 Positioned(
                                   top: 8,
@@ -2443,6 +2250,140 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         ],
       ),
     );
+  }
+
+  Widget _buildVideoThumbnail(Message message) {
+    final id = message.id;
+  // Unused locals removed (fileId/localPath)
+
+    // Use existing thumb controller if initialized
+    final existing = _videoThumbControllers[id];
+    if (existing != null && existing.value.isInitialized) {
+      // Expand to fill the container and crop with BoxFit.cover semantics
+      return SizedBox.expand(
+        child: FittedBox(
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+          child: SizedBox(
+            width: existing.value.size.width,
+            height: existing.value.size.height,
+            child: VideoPlayer(existing),
+          ),
+        ),
+      );
+    }
+
+    if (_videoThumbErrors.contains(id)) {
+      return Container(
+        color: Colors.black87,
+        child: const Center(
+          child: Icon(Icons.broken_image, color: Colors.white54, size: 40),
+        ),
+      );
+    }
+
+    // Start initialization if not already
+    if (!_videoThumbInitializing.contains(id)) {
+      _videoThumbInitializing.add(id);
+      _initVideoThumbController(message);
+    }
+
+    return Container(
+      color: Colors.black87,
+      child: const Center(
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _initVideoThumbController(Message message) async {
+    final id = message.id;
+    try {
+      VideoPlayerController controller;
+      if (message.tempVideoPath != null) {
+        final f = File(message.tempVideoPath!);
+        if (!await f.exists()) throw Exception('Local video missing');
+        controller = VideoPlayerController.file(f);
+      } else if (message.fileId != null) {
+        final base = getEnv("API_BASE_URL");
+        if (base == null) throw Exception('API_BASE_URL not set');
+        final url = base.endsWith('/') ? '${base}uploads/${message.fileId!}' : '$base/uploads/${message.fileId!}';
+        controller = VideoPlayerController.network(url);
+      } else {
+        throw Exception('No video source');
+      }
+      await controller.initialize();
+      controller.pause(); // keep first frame
+      if (!mounted) { controller.dispose(); return; }
+      setState(() {
+        _videoThumbControllers[id] = controller;
+      });
+    } catch (e) {
+      debugPrint('Video thumb error for $id: $e');
+      if (mounted) {
+        setState(() {
+          _videoThumbErrors.add(id);
+        });
+      }
+    } finally {
+      _videoThumbInitializing.remove(id);
+    }
+  }
+
+  Future<void> _openFullscreenVideo(Message message) async {
+    // Dispose any existing preview controller
+    _disposePreviewVideo();
+    setState(() {
+      _showFullscreenPreview = true;
+      _previewMediaType = 'video';
+      _videoPreviewError = false;
+    });
+
+    try {
+      VideoPlayerController controller;
+      if (message.tempVideoPath != null) {
+        final f = File(message.tempVideoPath!);
+        if (!await f.exists()) throw Exception('Local video missing');
+        controller = VideoPlayerController.file(f);
+      } else if (message.fileId != null) {
+        final base = getEnv("API_BASE_URL");
+        if (base == null) throw Exception('API_BASE_URL not set');
+        final url = base.endsWith('/') ? '${base}uploads/${message.fileId!}' : '$base/uploads/${message.fileId!}';
+        controller = VideoPlayerController.network(url);
+      } else {
+        throw Exception('No video source');
+      }
+      await controller.initialize();
+      _previewVideoController = controller;
+      _previewChewieController = ChewieController(
+        videoPlayerController: controller,
+        autoPlay: true,
+        looping: false,
+        allowFullScreen: false,
+        allowMuting: true,
+        materialProgressColors: ChewieProgressColors(
+          playedColor: Colors.blueAccent,
+          handleColor: Colors.blue,
+          backgroundColor: Colors.white24,
+          bufferedColor: Colors.blueGrey,
+        ),
+      );
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('Fullscreen video error: $e');
+      if (mounted) setState(() { _videoPreviewError = true; });
+    }
+  }
+
+  void _disposePreviewVideo() {
+    _previewChewieController?.dispose();
+    _previewVideoController?.dispose();
+    _previewChewieController = null;
+    _previewVideoController = null;
   }
 
   Widget _buildMediaPicker() {
@@ -2723,9 +2664,8 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   // Reply to message functionality
   void _replyToMessage(Message message) {
     // Set the message to reply to and focus the text input
-    setState(() {
-      _replyingToMessage = message;
-    });
+    // Reply feature disabled: _replyingToMessage field removed
+    setState(() { /* placeholder for future reply state */ });
     _textController.clear();
     FocusScope.of(context).requestFocus(_textFocusNode);
     _showSnackBar('Replying to message');
@@ -3138,7 +3078,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       } else {
         _selectedMessages.add(message.id);
       }
-      _isSelectionMode = _selectedMessages.isNotEmpty;
+  // selection mode derived: _selectedMessages.isNotEmpty
     });
     
     if (_selectedMessages.isNotEmpty) {
@@ -3494,37 +3434,59 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
           children: [
             // Media content
             Center(
-              child: _previewMediaType == 'image' && _pickedImage != null
-                  ? InteractiveViewer(
+              child: () {
+                // IMAGE PREVIEW (only for newly picked image before sending)
+                if (_previewMediaType == 'image') {
+                  if (_pickedImage != null) {
+                    return InteractiveViewer(
                       child: Image.file(
                         File(_pickedImage!.path),
                         fit: BoxFit.contain,
                       ),
-                    )
-                  : _previewMediaType == 'video' && _pickedVideo != null
-                      ? (_videoPreviewError
-                          ? Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: const [
-                                Icon(Icons.error_outline, color: Colors.red, size: 64),
-                                SizedBox(height: 12),
-                                Text('Unable to load video', style: TextStyle(color: Colors.white70)),
-                              ],
-                            )
-                          : (_previewChewieController != null && _previewVideoController != null
-                              ? AspectRatio(
-                                  aspectRatio: _previewVideoController!.value.aspectRatio,
-                                  child: Chewie(controller: _previewChewieController!),
-                                )
-                              : Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: const [
-                                    CircularProgressIndicator(color: Colors.white),
-                                    SizedBox(height: 12),
-                                    Text('Loading video...', style: TextStyle(color: Colors.white70)),
-                                  ],
-                                )))
-                      : Container(),
+                    );
+                  }
+                  return const SizedBox();
+                }
+
+                // VIDEO PREVIEW (for either newly picked video OR existing chat video)
+                if (_previewMediaType == 'video') {
+                  if (_videoPreviewError) {
+                    return Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: const [
+                        Icon(Icons.error_outline, color: Colors.red, size: 64),
+                        SizedBox(height: 12),
+                        Text('Unable to load video', style: TextStyle(color: Colors.white70)),
+                      ],
+                    );
+                  }
+
+                  // Show player once controller + chewie are ready & initialized
+                  if (_previewVideoController != null &&
+                      _previewChewieController != null &&
+                      _previewVideoController!.value.isInitialized) {
+                    final aspect = _previewVideoController!.value.aspectRatio == 0
+                        ? 16 / 9
+                        : _previewVideoController!.value.aspectRatio;
+                    return AspectRatio(
+                      aspectRatio: aspect,
+                      child: Chewie(controller: _previewChewieController!),
+                    );
+                  }
+
+                  // Loading placeholder while initializing
+                  return Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: const [
+                      CircularProgressIndicator(color: Colors.white),
+                      SizedBox(height: 12),
+                      Text('Loading video...', style: TextStyle(color: Colors.white70)),
+                    ],
+                  );
+                }
+
+                return const SizedBox();
+              }(),
             ),
             // Top controls
             Positioned(

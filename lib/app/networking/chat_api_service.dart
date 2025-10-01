@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/app/models/chat_messages_response.dart';
+import 'package:flutter_app/app/models/media_response.dart';
 import 'package:flutter_app/app/models/user.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import '/app/models/chat.dart';
@@ -88,6 +89,7 @@ class ChatApiService extends ApiService {
     );
   }
 
+
   Future<CallResponse?> joinVoiceCall(int chatId) async {
     return await network<CallResponse>(
       request: (request) => request.post(
@@ -109,6 +111,18 @@ class ChatApiService extends ApiService {
       ),
     );
   }
+
+  Future<List<MediaResponse>?> getChatMedia(int chatId) async {
+    return await network<List<MediaResponse>>(
+      request: (request) => request.get(
+        "/chat/media",
+        queryParameters: {
+          "chatId": chatId,
+        },
+      ),
+    );  
+  }
+  
 
   /// Get chat with previous messages (using the /chat endpoint)
   Future<ChatCreationResponse?> getChatWithMessages({
@@ -150,6 +164,8 @@ class ChatApiService extends ApiService {
       ),
     );
   }
+
+
 
   /// Send a message to a chat (fallback when WebSocket is not available)
   Future<void> sendMessage({
