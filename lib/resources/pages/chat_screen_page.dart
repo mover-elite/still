@@ -20,11 +20,13 @@ import '/resources/pages/video_call_page.dart';
 import '/resources/pages/voice_call_page.dart';
 import 'package:file_picker/file_picker.dart';
 import "../../app/utils/chat.dart";
+import "../../app/utils.dart";
 import "/app/services/chat_service.dart";
 import 'package:audioplayers/audioplayers.dart';
 import 'package:saver_gallery/saver_gallery.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
+import 'package:open_filex/open_filex.dart';
 
 class ChatScreenPage extends NyStatefulWidget {
   static RouteView path = ("/chat-screen", (_) => ChatScreenPage());
@@ -40,6 +42,9 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   bool _hasText = false;
   XFile? _pickedImage;
   XFile? _pickedVideo;
+  // Document selection
+  String? _pickedDocumentPath;
+  String? _pickedDocumentName;
   bool _isRecording = false;
   late Record _audioRecorder;
   Timer? _recordingTimer;
@@ -670,9 +675,15 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
 
 
   void _sendMessage() async {
+    // Allow sending if text OR any media/document selected
+    if (_messageController.text.trim().isEmpty &&
+        _pickedImage == null &&
+        _pickedVideo == null &&
+        _pickedDocumentPath == null) {
+      return;
+    }
 
-    if (_messageController.text.trim().isNotEmpty) {
-      final messageText = _messageController.text.trim();
+    final messageText = _messageController.text.trim();
       print("Sending message: $messageText");
       print("WebSocket connected: $_isWebSocketConnected");
       print("Chat ID: ${_chat?.id}");
@@ -680,7 +691,11 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
 
       // Add message to UI immediately for better UX
       final referenceId = DateTime.now().millisecondsSinceEpoch;
-      final type = _pickedImage != null ? "PHOTO" : (_pickedVideo != null ? "VIDEO" : "TEXT");
+      final type = _pickedImage != null
+          ? "PHOTO"
+          : (_pickedVideo != null
+              ? "VIDEO"
+              : (_pickedDocumentPath != null ? "DOCUMENT" : "TEXT"));
       
       setState(() {
         final now = DateTime.now();
@@ -689,8 +704,10 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
           senderId: _currentUserId ?? 0,
           chatId: _chat?.id ?? 0,
           type: type,
-          text: messageText,
-          caption: (_pickedImage != null || _pickedVideo != null) ? messageText : null,
+          // text: type == 'DOCUMENT' ? (_pickedDocumentName ?? 'Document') : messageText,
+          caption: (type == 'PHOTO' || type == 'VIDEO' || type == 'DOCUMENT')
+              ? (messageText.isNotEmpty ? messageText : null)
+              : null,
           fileId: null,
           createdAt: now,
           updatedAt: now,
@@ -719,7 +736,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       _messageController.clear();
       _scrollToBottom();
 
-      final shouldSendViaWebSocket =  WebSocketService().isConnected && _pickedImage == null && _pickedVideo == null;
+      final shouldSendViaWebSocket =  WebSocketService().isConnected && _pickedImage == null && _pickedVideo == null && _pickedDocumentPath == null;
       print('🔍 Should send via WebSocket: $shouldSendViaWebSocket');
 
       if (shouldSendViaWebSocket) {
@@ -729,18 +746,22 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       } else if (_chat != null) {
         try {
           
-          apiService.sendMessage(
+          await apiService.sendMessage(
             chatId: _chat!.id,
-            text: messageText,
-            caption: messageText,
-            filePath: _pickedImage?.path ?? _pickedVideo?.path,
+            text: (type == 'TEXT' ? messageText : messageText),
+            caption: (type == 'PHOTO' || type == 'VIDEO' || type == 'DOCUMENT')
+                ? (messageText.isNotEmpty ? messageText : null)
+                : null,
+            filePath: _pickedImage?.path ?? _pickedVideo?.path ?? _pickedDocumentPath,
             referenceId: referenceId,
-            type: _pickedImage != null ? "PHOTO" : (_pickedVideo != null ? "VIDEO" : "TEXT"),
-
+            type: type,
           );
+          print("Message sent via API");
           setState(() {
             _pickedImage = null; // Clear the picked image after sending
             _pickedVideo = null; // Clear the picked video after sending
+            _pickedDocumentPath = null;
+            _pickedDocumentName = null;
           });
           
           // if (result != null) {}
@@ -761,7 +782,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
           }
         });
       }
-    }
+    
   }
 
   Future<void> _sendAudioMessage(String audioPath) async {
@@ -824,13 +845,14 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
  void _scrollToBottom() {
   WidgetsBinding.instance.addPostFrameCallback((_) {
     if (mounted && _scrollController.hasClients) {
-      // Force scroll to the very bottom
+      
       _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
       
       // Then animate to ensure smooth scroll
-      Future.delayed(const Duration(milliseconds: 200), () {
+      Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted && _scrollController.hasClients) {
           _scrollController.animateTo(
+            
             _scrollController.position.maxScrollExtent,
             duration: const Duration(milliseconds: 500),
             curve: Curves.easeOut,
@@ -1219,57 +1241,100 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    // Media preview above input
-                                    if (_pickedImage != null || _pickedVideo != null)
+                                    // Media / Document preview above input
+                                    if (_pickedImage != null || _pickedVideo != null || _pickedDocumentPath != null)
                                       Container(
                                         margin: const EdgeInsets.only(bottom: 12),
-                                        child: GestureDetector(
-                                          onTap: _showFullscreenMediaPreview,
-                                          child: Container(
-                                            padding: const EdgeInsets.all(12),
-                                            decoration: BoxDecoration(
-                                              borderRadius: BorderRadius.circular(12),
-                                              color: Colors.green.withOpacity(0.1),
-                                              border: Border.all(color: Colors.green.withOpacity(0.3)),
-                                            ),
-                                            child: Row(
-                                              children: [
-                                                Icon(
-                                                  _pickedImage != null ? Icons.image : Icons.videocam,
-                                                  color: Colors.green,
-                                                  size: 24,
+                                        child: Builder(
+                                          builder: (_) {
+                                            if (_pickedDocumentPath != null) {
+                                              return Container(
+                                                padding: const EdgeInsets.all(12),
+                                                decoration: BoxDecoration(
+                                                  borderRadius: BorderRadius.circular(12),
+                                                  color: Colors.orange.withOpacity(0.08),
+                                                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
                                                 ),
-                                                const SizedBox(width: 12),
-                                                Expanded(
-                                                  child: Text(
-                                                    _pickedImage != null 
-                                                        ? 'Image selected - Tap to preview'
-                                                        : 'Video selected - Tap to preview',
-                                                    style: const TextStyle(
+                                                child: Row(
+                                                  children: [
+                                                    const Icon(Icons.insert_drive_file, color: Colors.orange, size: 24),
+                                                    const SizedBox(width: 12),
+                                                    Expanded(
+                                                      child: Text(
+                                                        _pickedDocumentName ?? 'Document selected',
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow.ellipsis,
+                                                        style: const TextStyle(
+                                                          color: Colors.orange,
+                                                          fontWeight: FontWeight.w600,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    GestureDetector(
+                                                      onTap: _clearPickedDocument,
+                                                      child: Container(
+                                                        padding: const EdgeInsets.all(4),
+                                                        decoration: BoxDecoration(
+                                                          color: Colors.red.withOpacity(0.1),
+                                                          shape: BoxShape.circle,
+                                                          border: Border.all(color: Colors.red.withOpacity(0.3)),
+                                                        ),
+                                                        child: const Icon(Icons.close, color: Colors.red, size: 16),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            }
+                                            return GestureDetector(
+                                              onTap: _showFullscreenMediaPreview,
+                                              child: Container(
+                                                padding: const EdgeInsets.all(12),
+                                                decoration: BoxDecoration(
+                                                  borderRadius: BorderRadius.circular(12),
+                                                  color: Colors.green.withOpacity(0.1),
+                                                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                                                ),
+                                                child: Row(
+                                                  children: [
+                                                    Icon(
+                                                      _pickedImage != null ? Icons.image : Icons.videocam,
                                                       color: Colors.green,
-                                                      fontWeight: FontWeight.w500,
+                                                      size: 24,
                                                     ),
-                                                  ),
+                                                    const SizedBox(width: 12),
+                                                    Expanded(
+                                                      child: Text(
+                                                        _pickedImage != null
+                                                            ? 'Image selected - Tap to preview'
+                                                            : 'Video selected - Tap to preview',
+                                                        style: const TextStyle(
+                                                          color: Colors.green,
+                                                          fontWeight: FontWeight.w500,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    GestureDetector(
+                                                      onTap: _closeImagePreview,
+                                                      child: Container(
+                                                        padding: const EdgeInsets.all(4),
+                                                        decoration: BoxDecoration(
+                                                          color: Colors.red.withOpacity(0.1),
+                                                          shape: BoxShape.circle,
+                                                          border: Border.all(color: Colors.red.withOpacity(0.3)),
+                                                        ),
+                                                        child: const Icon(
+                                                          Icons.close,
+                                                          color: Colors.red,
+                                                          size: 16,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ],
                                                 ),
-                                                GestureDetector(
-                                                  onTap: _closeImagePreview,
-                                                  child: Container(
-                                                    padding: const EdgeInsets.all(4),
-                                                    decoration: BoxDecoration(
-                                                      color: Colors.red.withOpacity(0.1),
-                                                      shape: BoxShape.circle,
-                                                      border: Border.all(color: Colors.red.withOpacity(0.3)),
-                                                    ),
-                                                    child: const Icon(
-                                                      Icons.close,
-                                                      color: Colors.red,
-                                                      size: 16,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
+                                              ),
+                                            );
+                                          },
                                         ),
                                       ),
                                     // Recording indicator
@@ -1395,7 +1460,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                                                   horizontal: 16,
                                                   vertical: 10,
                                                 ),
-                                                suffixIcon: _hasText
+                                                suffixIcon: (_hasText || _pickedImage != null || _pickedVideo != null || _pickedDocumentPath != null)
                                                     ? GestureDetector(
                                                         onTap: _sendMessage,
                                                         child: Container(
@@ -1502,6 +1567,8 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       
       case "VIDEO":
         return _buildVideoMessage(message);
+      case "DOCUMENT":
+        return _buildDocumentMessage(message);
         
       case "TEXT":
       default:
@@ -1632,13 +1699,18 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                         ],
                       )
                     else
-                      Text(
+                      TextUtils.buildTextWithLinks(
                         message.type == "TEXT"
                             ? (message.text ?? '')
                             : (message.caption ?? ''),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 16,
+                        ),
+                        linkStyle: const TextStyle(
+                          color: Colors.blue,
+                          fontSize: 16,
+                          decoration: TextDecoration.underline,
                         ),
                       ),
                     const SizedBox(height: 4),
@@ -1975,11 +2047,16 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
+                            TextUtils.buildTextWithLinks(
                               message.caption!,
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 14,
+                              ),
+                              linkStyle: const TextStyle(
+                                color: Colors.blue,
+                                fontSize: 14,
+                                decoration: TextDecoration.underline,
                               ),
                             ),
                             const SizedBox(height: 2),
@@ -2201,11 +2278,16 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                           (message.caption?.isNotEmpty ?? false)
                               ? Padding(
                                   padding: const EdgeInsets.all(12),
-                                  child: Text(
+                                  child: TextUtils.buildTextWithLinks(
                                     message.caption!,
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 14,
+                                    ),
+                                    linkStyle: const TextStyle(
+                                      color: Colors.blue,
+                                      fontSize: 14,
+                                      decoration: TextDecoration.underline,
                                     ),
                                   ),
                                 )
@@ -2454,7 +2536,9 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
 
           // Content area (takes most of the space)
           Expanded(
-            child: _MediaPickerContent(),
+            child: _MediaPickerContent(
+              onFileSelected: _onDocumentSelected,
+            ),
           ),
 
           // Tab indicator at bottom
@@ -2966,69 +3050,94 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   Future<void> _saveDocumentToDevice(Message message) async {
     try {
       _showSnackBar('Saving document...');
-      
-      // Request storage permission
-      final permission = await Permission.storage.request();
-      if (permission != PermissionStatus.granted) {
-        _showSnackBar('Storage permission denied');
+      if (message.fileId == null) {
+        _showSnackBar('No document to save');
         return;
       }
 
-      if (message.fileId != null) {
-        // Download document from network using HttpClient
-        final documentUrl = '${getEnv("API_BASE_URL")}/uploads/${message.fileId}';
-        
-        final client = HttpClient();
-        try {
-          final request = await client.getUrl(Uri.parse(documentUrl));
-          final response = await request.close();
-          
-          if (response.statusCode == 200) {
-            // Determine file extension from URL or use default
-            String fileExtension = _getFileExtension(documentUrl);
-            if (fileExtension.isEmpty) {
-              fileExtension = 'pdf'; // Default to PDF
-            }
-            
-            // Save document to Downloads folder
-            final downloadsDir = await getDownloadsDirectory();
-            if (downloadsDir != null) {
-              final finalPath = '${downloadsDir.path}/chat_document_${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
-              final file = File(finalPath);
-              final sink = file.openWrite();
-              await sink.addStream(response);
-              await sink.close();
-              _showSnackBar('Document saved to Downloads folder successfully');
-            } else {
-              // Fallback to external storage directory
-              final externalDir = await getExternalStorageDirectory();
-              if (externalDir != null) {
-                final finalPath = '${externalDir.path}/Download/chat_document_${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
-                final downloadDir = Directory('${externalDir.path}/Download');
-                if (!await downloadDir.exists()) {
-                  await downloadDir.create(recursive: true);
-                }
-                final file = File(finalPath);
-                final sink = file.openWrite();
-                await sink.addStream(response);
-                await sink.close();
-                _showSnackBar('Document saved successfully');
-              } else {
-                _showSnackBar('Could not find Downloads folder');
-              }
-            }
-          } else {
-            _showSnackBar('Failed to download document');
-          }
-        } finally {
-          client.close();
+      // Android requires storage permission for public Downloads
+      if (Platform.isAndroid) {
+        final permission = await Permission.storage.request();
+        if (permission != PermissionStatus.granted) {
+          _showSnackBar('Storage permission denied');
+          return;
         }
-      } else {
-        _showSnackBar('No document to save');
+      }
+
+      final documentUrl = '${getEnv("API_BASE_URL")}/uploads/${message.fileId}';
+      final client = HttpClient();
+      try {
+        final request = await client.getUrl(Uri.parse(documentUrl));
+        final response = await request.close();
+        if (response.statusCode != 200) {
+          _showSnackBar('Failed to download document');
+          return;
+        }
+
+        Directory targetDir;
+        if (Platform.isAndroid) {
+          final publicDownloads = await _getAndroidPublicDownloadsDir();
+          targetDir = publicDownloads ?? await getApplicationDocumentsDirectory();
+        } else {
+          Directory? downloadsDir;
+          try { downloadsDir = await getDownloadsDirectory(); } catch (_) {}
+          targetDir = downloadsDir ?? await getApplicationDocumentsDirectory();
+        }
+
+        if (!await targetDir.exists()) {
+          await targetDir.create(recursive: true);
+        }
+
+        // Determine extension
+        String fileExtension = _getFileExtension(documentUrl);
+        if (fileExtension.isEmpty) {
+          final name = message.text ?? '';
+          final dot = name.lastIndexOf('.');
+          if (dot != -1 && dot < name.length - 1) {
+            fileExtension = name.substring(dot + 1);
+          }
+        }
+        if (fileExtension.isEmpty) fileExtension = 'bin';
+
+        final originalName = (message.text != null && message.text!.contains('.'))
+            ? message.text!
+            : 'chat_document_${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
+        final safeName = originalName.split('/').last.split('\\').last;
+        final path = '${targetDir.path}/$safeName';
+
+        final file = File(path);
+        final sink = file.openWrite();
+        await sink.addStream(response);
+        await sink.close();
+
+        _showSnackBar('File savedß');
+      } finally {
+        client.close();
       }
     } catch (e) {
       print('Error saving document: $e');
       _showSnackBar('Failed to save document: $e');
+    }
+  }
+
+  Future<Directory?> _getAndroidPublicDownloadsDir() async {
+    if (!Platform.isAndroid) return null;
+    final candidates = [
+      '/storage/emulated/0/Download',
+      '/sdcard/Download',
+      '/storage/self/primary/Download',
+    ];
+    for (final p in candidates) {
+      final d = Directory(p);
+      if (await d.exists()) return d;
+    }
+    // Try create first
+    try {
+      final fallback = Directory(candidates.first);
+      if (!await fallback.exists()) await fallback.create(recursive: true);
+      return fallback;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -3545,9 +3654,268 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       ),
     );
   }
+
+  // ===== Document Support =====
+  void _onDocumentSelected(String path, String name) {
+    setState(() {
+      _pickedDocumentPath = path;
+      _pickedDocumentName = name;
+      _showMediaPicker = false;
+    });
+  }
+
+  void _clearPickedDocument() {
+    setState(() {
+      _pickedDocumentPath = null;
+      _pickedDocumentName = null;
+    });
+  }
+
+  String _formatTime(DateTime dt) {
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  Widget _buildStatusIcon(Message message) {
+    IconData icon;
+    Color color;
+    if (message.isRead) {
+      icon = Icons.done_all; color = const Color(0xFF2F80ED);
+    } else if (message.isDelivered) {
+      icon = Icons.done_all; color = Colors.grey.shade500;
+    } else if (message.isSent) {
+      icon = Icons.done; color = Colors.grey.shade600;
+    } else { icon = Icons.access_time; color = Colors.grey.shade600; }
+    return Icon(icon, size: 14, color: color);
+  }
+
+  Widget _buildDocumentMessage(Message message) {
+    final bool isSentByMe = _currentUserId != null && message.senderId == _currentUserId;
+    final bool isLastMessage = _messages.isNotEmpty && _messages.last == message;
+    final fileName = message.text ?? 'Document';
+    final caption = message.caption;
+    // Local cached path map key could be message.fileId or referenceId; we'll attempt to build deterministic temp path
+    return Container(
+      margin: EdgeInsets.fromLTRB(2, 0, 2, isLastMessage ? 20 : 4),
+      child: Row(
+        mainAxisAlignment: isSentByMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!isSentByMe) const SizedBox(width: 10),
+          Flexible(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.7,
+                minWidth: 160,
+              ),
+              child: GestureDetector(
+                onTapDown: (details) => _showMessageContextMenu(context, message, details.globalPosition),
+                onLongPress: () {
+                  final box = context.findRenderObject() as RenderBox?;
+                  final pos = box?.localToGlobal(Offset.zero) ?? Offset.zero;
+                  _showMessageContextMenu(context, message, pos);
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isSentByMe ? const Color(0xFF18365B) : const Color(0xFF404040),
+                    borderRadius: isSentByMe
+                        ? const BorderRadius.only(
+                            topLeft: Radius.circular(16),
+                            topRight: Radius.circular(4),
+                            bottomLeft: Radius.circular(16),
+                            bottomRight: Radius.circular(16),
+                          )
+                        : const BorderRadius.only(
+                            topLeft: Radius.circular(4),
+                            topRight: Radius.circular(16),
+                            bottomLeft: Radius.circular(16),
+                            bottomRight: Radius.circular(16),
+                          ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Icon + action (download/open)
+                          _buildDocumentActionIcon(message),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                GestureDetector(
+                                  onTap: () => _openOrDownloadDocument(message),
+                                  child: Text(
+                                    fileName,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Color(0xFFE8E7EA),
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                if (caption != null && caption.isNotEmpty && caption != fileName)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4.0),
+                                    child: GestureDetector(
+                                      onTapDown: (d) => _showMessageContextMenu(context, message, d.globalPosition),
+                                      child: TextUtils.buildTextWithLinks(
+                                        caption,
+                                        style: TextStyle(
+                                          color: Colors.grey.shade300,
+                                          fontSize: 13,
+                                        ),
+                                        linkStyle: TextStyle(
+                                          color: Colors.blue,
+                                          fontSize: 13,
+                                          decoration: TextDecoration.underline,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _formatTime(message.createdAt),
+                            style: TextStyle(
+                              color: Colors.grey.shade400,
+                              fontSize: 11,
+                            ),
+                          ),
+                          if (isSentByMe) ...[
+                            const SizedBox(width: 4),
+                            _buildStatusIcon(message),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (isSentByMe) const SizedBox(width: 10),
+        ],
+      ),
+    );
+  }
+
+  // Builds the leading square icon that changes depending on download/open state
+  Widget _buildDocumentActionIcon(Message message) {
+    return FutureBuilder<bool>(
+      future: _isDocumentCached(message),
+      builder: (context, snapshot) {
+        final cached = snapshot.data == true;
+        final isLoading = snapshot.connectionState == ConnectionState.waiting;
+        return GestureDetector(
+          onTap: isLoading ? null : () => _openOrDownloadDocument(message),
+          child: Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFF2A2A2A),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.black.withOpacity(0.2), width: 0.5),
+            ),
+            child: Center(
+              child: isLoading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
+                    )
+                  : Icon(
+                      cached ? Icons.open_in_new : Icons.download_rounded,
+                      size: 22,
+                      color: const Color(0xFF3498DB),
+                    ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openOrDownloadDocument(Message message) async {
+    try {
+      final cached = await _isDocumentCached(message);
+      if (cached) {
+        final path = await _localDocumentPath(message);
+        if (path != null) {
+          await OpenFilex.open(path);
+        } else {
+          _showSnackBar('File not found');
+        }
+        return;
+      }
+      // Not cached -> download
+      _showSnackBar('Downloading document...');
+      final saved = await _downloadAndCacheDocument(message);
+      if (saved != null) {
+        _showSnackBar('Download complete');
+        await OpenFilex.open(saved);
+      } else {
+        _showSnackBar('Download failed');
+      }
+    } catch (e) {
+      debugPrint('Open/download doc error: $e');
+      _showSnackBar('Unable to open document');
+    }
+  }
+
+  Future<bool> _isDocumentCached(Message message) async {
+    final path = await _localDocumentPath(message);
+    if (path == null) return false;
+    return File(path).exists();
+  }
+
+  Future<String?> _localDocumentPath(Message message) async {
+    final dir = await getTemporaryDirectory();
+    final dynamic rawId = message.fileId ?? message.referenceId ?? message.id;
+    final String id = rawId.toString();
+    // Keep extension if present in original filename (message.text)
+    String baseName = id;
+    final name = message.text ?? '';
+    final dot = name.lastIndexOf('.');
+    if (dot != -1 && dot < name.length - 1) {
+      final ext = name.substring(dot + 1);
+      baseName = '$id.$ext';
+    }
+    return '${dir.path}/doc_$baseName';
+  }
+
+  Future<String?> _downloadAndCacheDocument(Message message) async {
+    if (message.fileId == null) return null; // Can't download without remote id
+    try {
+      final url = '${getEnv("API_BASE_URL")}/uploads/${message.fileId}';
+      final savePath = await _localDocumentPath(message);
+      if (savePath == null) return null;
+      await Dio().download(url, savePath);
+      return savePath;
+    } catch (e) {
+      debugPrint('Download doc failed: $e');
+      return null;
+    }
+  }
 }
 
 class _MediaPickerContent extends StatefulWidget {
+  final void Function(String path, String name)? onFileSelected;
+  const _MediaPickerContent({this.onFileSelected});
   @override
   _MediaPickerContentState createState() => _MediaPickerContentState();
 }
@@ -3555,17 +3923,24 @@ class _MediaPickerContent extends StatefulWidget {
 class _MediaPickerContentState extends State<_MediaPickerContent> {
   int _selectedTabIndex = 0;
 
-  final List<MediaTab> _tabs = [
-    MediaTab(
-      title: 'Gallery',
-      icon: Icons.photo_library,
-      content: _GalleryContent(),
-    ),
-    MediaTab(
-      title: 'File',
-      icon: Icons.folder,
-      content: _FileContent(),
-    ),
+  late List<MediaTab> _tabs;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabs = [
+      MediaTab(
+        title: 'Gallery',
+        icon: Icons.photo_library,
+        content: _GalleryContent(),
+      ),
+      MediaTab(
+        title: 'File',
+        icon: Icons.folder,
+        content: _FileContent(
+          onPick: (p, n) => widget.onFileSelected?.call(p, n),
+        ),
+      ),
     MediaTab(
       title: 'Location',
       icon: Icons.location_on,
@@ -3576,12 +3951,13 @@ class _MediaPickerContentState extends State<_MediaPickerContent> {
       icon: Icons.transform,
       content: _ConversionContent(),
     ),
-    MediaTab(
-      title: 'Contact',
-      icon: Icons.contact_phone,
-      content: _ContactContent(),
-    ),
-  ];
+      MediaTab(
+        title: 'Contact',
+        icon: Icons.contact_phone,
+        content: _ContactContent(),
+      ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -4115,6 +4491,8 @@ class _GalleryContentState extends State<_GalleryContent> {
 
 // File Content Widget
 class _FileContent extends StatefulWidget {
+  final void Function(String path, String name)? onPick;
+  const _FileContent({this.onPick});
   @override
   _FileContentState createState() => _FileContentState();
 }
@@ -4228,62 +4606,13 @@ class _FileContentState extends State<_FileContent> {
       if (result != null && result.files.isNotEmpty) {
         final file = result.files.first;
         print('Selected file: ${file.name}, Path: ${file.path}');
-        
-        // Here you can handle the selected file
-        // For example, send it through the chat
-        if (file.path != null) {
-          _showFileSelectedDialog(file.name, file.path!);
+        if (file.path != null && widget.onPick != null) {
+          widget.onPick!(file.path!, file.name);
         }
       }
     } catch (e) {
       print('Error picking file: $e');
     }
-  }
-
-  void _showFileSelectedDialog(String fileName, String filePath) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF2A2A2A),
-          title: const Text(
-            'Send File',
-            style: TextStyle(color: Color(0xFFE8E7EA)),
-          ),
-          content: Text(
-            'Do you want to send "$fileName"?',
-            style: const TextStyle(color: Color(0xFFE8E7EA)),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text(
-                'Cancel',
-                style: TextStyle(color: Colors.grey),
-              ),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                _sendFile(filePath, fileName);
-              },
-              child: const Text(
-                'Send',
-                style: TextStyle(color: Color(0xFF3498DB)),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _sendFile(String filePath, String fileName) {
-    // TODO: Implement file sending logic
-    print('Sending file: $fileName from path: $filePath');
-    // You can integrate this with your existing message sending logic
   }
 
   String _getFileIcon(String path) {
@@ -4517,7 +4846,9 @@ class _FileContentState extends State<_FileContent> {
                             if (isDirectory) {
                               _navigateToDirectory(entity.path);
                             } else {
-                              _showFileSelectedDialog(name, entity.path);
+                              if (widget.onPick != null) {
+                                widget.onPick!(entity.path, name);
+                              }
                             }
                           },
                           child: Container(

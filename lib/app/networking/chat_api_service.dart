@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/app/models/chat_links_response.dart';
 import 'package:flutter_app/app/models/chat_messages_response.dart';
 import 'package:flutter_app/app/models/media_response.dart';
 import 'package:flutter_app/app/models/user.dart';
@@ -121,6 +122,28 @@ class ChatApiService extends ApiService {
         },
       ),
     );  
+  }
+  Future<List<MediaResponse>?> getChatFiles(int chatId) async {
+    return await network<List<MediaResponse>>(
+      request: (request) => request.get(
+        "/chat/files",
+        queryParameters: {
+          "chatId": chatId,
+        },
+      ),
+    );  
+  }
+
+  Future<List<LinkResponse>?> getChatLinks(int chatId) async {
+    
+    return await network<List<LinkResponse>>(
+      request: (request) => request.get(
+        "/chat/links",
+        queryParameters: {
+          "chatId": chatId,
+        },
+      ),
+    );
   }
   
 

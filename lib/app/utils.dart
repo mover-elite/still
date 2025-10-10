@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_app/app/models/contact_info.dart';
 import 'package:flutter_app/resources/widgets/email_verification_bottom_sheet_widget.dart'
     show EmailVerificationBottomSheet;
 import 'package:flutter_app/resources/widgets/phone_verification_bottom_sheet_widget.dart'
     show PhoneVerificationBottomSheet;
 import 'package:nylo_framework/nylo_framework.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../resources/widgets/email_login_bottom_sheet_widget.dart';
 import '../resources/widgets/phone_login_bottom_sheet_widget.dart';
@@ -186,5 +188,112 @@ class ContactManager {
       print('Error loading contacts: $e');
     }
     return getSampleContacts(); // Return sample data if no saved data
+  }
+}
+
+class TextUtils {
+
+  static RegExp urlPattern = RegExp(
+    r'(https?://[^\s]+)|(www\.[^\s]+)|(\b[a-zA-Z0-9][a-zA-Z0-9\-]*\.[a-zA-Z]{2,}(?:/[^\s]*)?)',
+    caseSensitive: false,
+  );
+
+  static bool containsLink(String text) {
+    return urlPattern.hasMatch(text);
+    
+  }
+  
+  static List<String> extractLinks(String text) {
+    return urlPattern.allMatches(text).map((match) => match.group(0)!).toList();
+  }
+
+  /// Parse text and return a list of text spans with links highlighted
+  static List<TextSpan> parseTextWithLinks(String text, {
+    TextStyle? defaultStyle,
+    TextStyle? linkStyle,
+    Function(String)? onLinkTap,
+  }) {
+    
+
+    List<TextSpan> spans = [];
+    int lastIndex = 0;
+
+    for (final match in urlPattern.allMatches(text)) {
+      // Add text before the link
+      if (match.start > lastIndex) {
+        spans.add(TextSpan(
+          text: text.substring(lastIndex, match.start),
+          style: defaultStyle,
+        ));
+      }
+
+      // Add the link
+      String url = match.group(0)!;
+      // Ensure URL has proper protocol
+      String fullUrl = url;
+      if (url.startsWith('www.')) {
+        fullUrl = 'https://$url';
+      } else if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        fullUrl = 'https://$url';
+      }
+      
+      spans.add(TextSpan(
+        text: url,
+        style: linkStyle ?? const TextStyle(
+          color: Colors.blue,
+          decoration: TextDecoration.underline,
+        ),
+        recognizer: TapGestureRecognizer()
+          ..onTap = () => onLinkTap?.call(fullUrl),
+      ));
+
+      lastIndex = match.end;
+    }
+
+    // Add remaining text after the last link
+    if (lastIndex < text.length) {
+      spans.add(TextSpan(
+        text: text.substring(lastIndex),
+        style: defaultStyle,
+      ));
+    }
+
+    return spans.isEmpty ? [TextSpan(text: text, style: defaultStyle)] : spans;
+  }
+
+  /// Create a RichText widget with clickable links
+  static Widget buildTextWithLinks(String text, {
+    TextStyle? style,
+    TextStyle? linkStyle,
+    Function(String)? onLinkTap,
+    TextAlign? textAlign,
+    int? maxLines,
+    TextOverflow? overflow,
+  }) {
+    return RichText(
+      text: TextSpan(
+        children: parseTextWithLinks(
+          text,
+          defaultStyle: style,
+          linkStyle: linkStyle,
+          onLinkTap: onLinkTap ?? _launchURL,
+        ),
+      ),
+      textAlign: textAlign ?? TextAlign.start,
+      maxLines: maxLines,
+      overflow: overflow ?? TextOverflow.clip,
+    );
+  }
+
+  /// Launch URL in browser
+  static Future<void> _launchURL(String url) async {
+    try {
+      final Uri uri = Uri.parse(url);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    } catch (e) {
+      debugPrint('Error launching URL: $e');
+    }
   }
 }
