@@ -161,7 +161,8 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
               _messages = messages;
             });
 
-            _scrollToBottom();
+            // Use a more robust initial scroll to bottom
+            _scrollToBottomInitial();
             await _connectToWebSocket();
             _sendReadReceipts(_messages);
           }
@@ -429,7 +430,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         }
       }
     });
-    _scrollToBottom();
+    _scrollToBottomForNewMessage();
   }
 
   void _onTextChanged() {
@@ -734,7 +735,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       });
 
       _messageController.clear();
-      _scrollToBottom();
+      _scrollToBottomForOwnMessage();
 
       final shouldSendViaWebSocket =  WebSocketService().isConnected && _pickedImage == null && _pickedVideo == null && _pickedDocumentPath == null;
       print('🔍 Should send via WebSocket: $shouldSendViaWebSocket');
@@ -822,7 +823,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         print('✅ Audio message added to list. Total messages: ${_messages.length}');
       });
       
-      _scrollToBottom();
+      _scrollToBottomForOwnMessage();
       
       try {
         // Send audio file via API
@@ -842,26 +843,172 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
     }
   }
 
- void _scrollToBottom() {
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    if (mounted && _scrollController.hasClients) {
-      
-      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-      
-      // Then animate to ensure smooth scroll
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (mounted && _scrollController.hasClients) {
-          _scrollController.animateTo(
-            
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 500),
-            curve: Curves.easeOut,
-          );
-        }
-      });
-    }
-  });
-}
+ /// Scroll to bottom specifically for new messages with proper timing
+ void _scrollToBottomForNewMessage() {
+   WidgetsBinding.instance.addPostFrameCallback((_) async {
+     if (!mounted || !_scrollController.hasClients) return;
+     
+     // Check if user is near the bottom (within 150 pixels to account for padding)
+     final currentPosition = _scrollController.position.pixels;
+     final maxExtent = _scrollController.position.maxScrollExtent;
+     final isNearBottom = (maxExtent - currentPosition) <= 150;
+     
+     if (!isNearBottom) {
+       // User is scrolled up, don't disturb them
+       return;
+     }
+     
+     // Wait longer for the new message to be fully rendered
+     await Future.delayed(const Duration(milliseconds: 300));
+     
+     if (mounted && _scrollController.hasClients) {
+       try {
+         // Get fresh max extent after delay
+         final newMaxExtent = _scrollController.position.maxScrollExtent;
+         
+         // Animate to the very bottom
+         await _scrollController.animateTo(
+           newMaxExtent,
+           duration: const Duration(milliseconds: 500),
+           curve: Curves.easeOutCubic,
+         );
+         
+         // Multiple verification attempts to ensure we reach the bottom
+         for (int i = 0; i < 5; i++) {
+           await Future.delayed(Duration(milliseconds: 150 * (i + 1)));
+           if (mounted && _scrollController.hasClients) {
+             final currentMaxExtent = _scrollController.position.maxScrollExtent;
+             final currentPosition = _scrollController.position.pixels;
+             
+             // If we're not at the very bottom or extent changed, scroll again
+             if (currentPosition < currentMaxExtent - 2 || currentMaxExtent != newMaxExtent) {
+               await _scrollController.animateTo(
+                 currentMaxExtent,
+                 duration: const Duration(milliseconds: 300),
+                 curve: Curves.easeOut,
+               );
+             } else {
+               break; // We've reached the stable bottom
+             }
+           }
+         }
+       } catch (e) {
+         // Fallback with multiple attempts
+         for (int i = 0; i < 8; i++) {
+           await Future.delayed(Duration(milliseconds: 200 * (i + 1)));
+           if (mounted && _scrollController.hasClients) {
+             try {
+               _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+               break;
+             } catch (e) {
+               continue;
+             }
+           }
+         }
+       }
+     }
+   });
+ }
+
+ /// Force scroll to bottom for user's own messages (always scroll)
+ void _scrollToBottomForOwnMessage() {
+   WidgetsBinding.instance.addPostFrameCallback((_) async {
+     // Wait longer for the new message to be fully rendered
+     await Future.delayed(const Duration(milliseconds: 350));
+     
+     if (mounted && _scrollController.hasClients) {
+       try {
+         // Get the maximum scroll extent
+         final maxExtent = _scrollController.position.maxScrollExtent;
+         
+         // Always animate to bottom for user's own messages
+         await _scrollController.animateTo(
+           maxExtent,
+           duration: const Duration(milliseconds: 500),
+           curve: Curves.easeOutCubic,
+         );
+         
+         // Multiple verification attempts to ensure we reach the absolute bottom
+         for (int i = 0; i < 6; i++) {
+           await Future.delayed(Duration(milliseconds: 150 * (i + 1)));
+           if (mounted && _scrollController.hasClients) {
+             final currentMaxExtent = _scrollController.position.maxScrollExtent;
+             final currentPosition = _scrollController.position.pixels;
+             
+             // If we're not at the very bottom or extent changed, scroll again
+             if (currentPosition < currentMaxExtent - 2 || currentMaxExtent != maxExtent) {
+               await _scrollController.animateTo(
+                 currentMaxExtent,
+                 duration: const Duration(milliseconds: 300),
+                 curve: Curves.easeOut,
+               );
+             } else {
+               break; // We've reached the stable bottom
+             }
+           }
+         }
+       } catch (e) {
+         // Robust fallback with multiple attempts
+         for (int i = 0; i < 10; i++) {
+           await Future.delayed(Duration(milliseconds: 200 * (i + 1)));
+           if (mounted && _scrollController.hasClients) {
+             try {
+               _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+               break;
+             } catch (e) {
+               continue;
+             }
+           }
+         }
+       }
+     }
+   });
+ }
+
+ /// Scroll to bottom for initial message load
+ void _scrollToBottomInitial() {
+   WidgetsBinding.instance.addPostFrameCallback((_) async {
+     // Wait longer for initial render as there might be many messages
+     await Future.delayed(const Duration(milliseconds: 400));
+     
+     if (mounted && _scrollController.hasClients) {
+       try {
+         // Jump to bottom immediately for initial load
+         final maxExtent = _scrollController.position.maxScrollExtent;
+         _scrollController.jumpTo(maxExtent);
+         
+         // Multiple verification attempts to ensure we reach the bottom
+         for (int i = 0; i < 5; i++) {
+           await Future.delayed(Duration(milliseconds: 150 * (i + 1)));
+           if (mounted && _scrollController.hasClients) {
+             final currentMaxExtent = _scrollController.position.maxScrollExtent;
+             final currentPosition = _scrollController.position.pixels;
+             
+             // If not at bottom or extent changed, scroll again
+             if (currentPosition < currentMaxExtent - 2 || currentMaxExtent != maxExtent) {
+               _scrollController.jumpTo(currentMaxExtent);
+             } else {
+               break; // We've reached the stable bottom
+             }
+           }
+         }
+       } catch (e) {
+         // Robust fallback with increasing delays
+         for (int i = 0; i < 10; i++) {
+           await Future.delayed(Duration(milliseconds: 200 * (i + 1)));
+           if (mounted && _scrollController.hasClients) {
+             try {
+               _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+               break;
+             } catch (e) {
+               continue;
+             }
+           }
+         }
+       }
+     }
+   });
+ }
 
   Future<void> _startRecording() async {
     try {
