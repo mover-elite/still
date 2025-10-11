@@ -164,6 +164,12 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
             // Use a more robust initial scroll to bottom
             _scrollToBottomInitial();
             await _connectToWebSocket();
+            
+            // Register this chat screen with ChatService to prevent message duplication
+            if (_chat != null) {
+              ChatService().registerActiveChatScreen(_chat!.id);
+            }
+            
             _sendReadReceipts(_messages);
           }
         } else {
@@ -415,16 +421,27 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         }
       } else {
         Message newMessage = Message.fromJson(messageData);
+        
         if (newMessage.referenceId != null) {
           final index = _messages
               .indexWhere((msg) => msg.referenceId == newMessage.referenceId);
           if (index != -1) {
+            print("Found reference message, updating: ${newMessage.referenceId}");
             _messages[index] = newMessage;
+            
+            // Update chat list when replacing a pending message
+            ChatService().updateChatListWithMessage(_chat!.id, newMessage);
             return;
           }
         }
-
+          print("Adding new message: ${newMessage.id}");
         _messages.add(newMessage);
+        
+        // Update chat list with the new message
+        if (_chat != null) {
+          ChatService().updateChatListWithMessage(_chat!.id, newMessage);
+        }
+        
         if (newMessage.senderId != _currentUserId) {
           WebSocketService().sendReadReceipt([newMessage.id]);
         }
@@ -459,6 +476,11 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
 
   @override
   void dispose() {
+    // Unregister this chat screen from ChatService
+    if (_chat != null) {
+      ChatService().unregisterActiveChatScreen(_chat!.id);
+    }
+    
     _messageController.removeListener(_onTextChanged);
     _scrollController.removeListener(_onScroll);
     _messageController.dispose();
@@ -730,6 +752,12 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         );
         // _pickedImage = null;
         _messages.add(newMessage);
+        
+        // Update chat list with the pending message
+        if (_chat != null) {
+          ChatService().updateChatListWithMessage(_chat!.id, newMessage);
+        }
+        
         print('✅ Message added to list. Total messages: ${_messages.length}');
         print('Message text: "${newMessage.text}"');
       });
@@ -820,6 +848,12 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
           audioDuration: _recordingDuration.toString(),
         );
         _messages.add(newMessage);
+        
+        // Update chat list with the audio message
+        if (_chat != null) {
+          ChatService().updateChatListWithMessage(_chat!.id, newMessage);
+        }
+        
         print('✅ Audio message added to list. Total messages: ${_messages.length}');
       });
       

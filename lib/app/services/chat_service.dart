@@ -17,6 +17,7 @@ class ChatService {
   final Map<int, Chat> _chats = {};
   final Map<int, List<Message>> _chatMessages = {};
   final Map<int, bool> _hasLoadInitialMessages = {};
+  final Set<int> _activeChatScreens = {}; // Track which chats have active screens
   final StreamController<List<Chat>> _chatListController =
       StreamController<List<Chat>>.broadcast();
 
@@ -36,6 +37,18 @@ class ChatService {
   Stream<Map<String, dynamic>> get messageStream => _messageController.stream;
   bool get isInitialized => _isInitialized;
 
+  /// Register a chat screen as active to prevent message duplication
+  void registerActiveChatScreen(int chatId) {
+    _activeChatScreens.add(chatId);
+    print('📱 Registered active chat screen for chat $chatId');
+  }
+
+  /// Unregister a chat screen when it's no longer active
+  void unregisterActiveChatScreen(int chatId) {
+    _activeChatScreens.remove(chatId);
+    print('📱 Unregistered active chat screen for chat $chatId');
+  }
+
   /// Private initialization method called in constructor
   Future<void> initialize() async {
     print("Initializing ChatService...");
@@ -52,10 +65,11 @@ class ChatService {
       await WebSocketService().initializeConnection();
 
       // Listen to WebSocket messages
-      WebSocketService().messageStream.listen(_handleWebSocketMessage);
       WebSocketService()
           .notificationStream
           .listen(_handleWebSocketNotification);
+      WebSocketService().messageStream.listen(_handleWebSocketMessage);
+      
 
       _isInitialized = true;
       print('✅ ChatService initialized automatically');
@@ -168,6 +182,13 @@ class ChatService {
     }
     ;
     _chatMessages[chatId]!.add(message);
+    
+    // Always update the chat list
+    updateChatListWithMessage(chatId, message);
+  }
+
+  /// Update chat list with new message (used for last message display)
+  void updateChatListWithMessage(int chatId, Message message) {
     // Update last message in chat
     if (_chats.containsKey(chatId)) {
       _chats[chatId]!.lastMessage = message;
@@ -183,8 +204,6 @@ class ChatService {
   /// Send message through API
   Future<void> sendMessage(String chatId, String message) async {
     try {
-      final apiService = ChatApiService();
-
       // Create message data for sending
       final messageData = {
         'chat_id': chatId,
@@ -233,8 +252,20 @@ class ChatService {
     try {
       final message = Message.fromJson(messageData);
 
-      // Add to local cache
-      addMessage(message.chatId, message);
+      // Always update the chat list with the latest message for display
+      updateChatListWithMessage(message.chatId, message);
+
+      // Check if this chat has an active screen that will handle the message
+      if (_activeChatScreens.contains(message.chatId)) {
+        print('📨 Chat list updated for chat ${message.chatId} - message handled by active chat screen');
+        return;
+      }
+
+      // Add to local message cache only for chats without active screens
+      if (!_chatMessages.containsKey(message.chatId)) {
+        _chatMessages[message.chatId] = [];
+      }
+      _chatMessages[message.chatId]!.add(message);
 
       print('📨 Received message for chat ${message.chatId}');
     } catch (e) {
