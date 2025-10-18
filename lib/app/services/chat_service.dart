@@ -17,6 +17,8 @@ class ChatService {
   final Map<int, Chat> _chats = {};
   final Map<int, List<Message>> _chatMessages = {};
   final Map<int, bool> _hasLoadInitialMessages = {};
+  // Track seen message IDs per chat to prevent duplicates
+  final Map<int, Set<int>> _seenMessageIds = {};
   final Set<int> _activeChatScreens = {}; // Track which chats have active screens
   final StreamController<List<Chat>> _chatListController =
       StreamController<List<Chat>>.broadcast();
@@ -149,13 +151,20 @@ class ChatService {
           await apiService.getChatMessages(chatId: chatId, limit: 50);
 
       if (messagesResponse?.messages.isNotEmpty == true) {
-        // Insert fetched messages at the start of the list
+        // Initialize caches
+        _chatMessages.putIfAbsent(chatId, () => []);
+        _seenMessageIds.putIfAbsent(chatId, () => <int>{});
 
-        if (_chatMessages.containsKey(chatId)) {
-          _chatMessages[chatId]!.insertAll(0, messagesResponse!.messages);
-        } else {
-          _chatMessages[chatId] =
-              List<Message>.from(messagesResponse!.messages);
+        // Filter out duplicates by ID
+        final existingIds = _seenMessageIds[chatId]!;
+        final unique = messagesResponse!.messages
+            .where((m) => !existingIds.contains(m.id))
+            .toList();
+
+        // Insert fetched messages at the start of the list
+        if (unique.isNotEmpty) {
+          _chatMessages[chatId]!.insertAll(0, unique);
+          existingIds.addAll(unique.map((m) => m.id));
         }
       } else if (!_chatMessages.containsKey(chatId)) {
         _chatMessages[chatId] = [];
@@ -174,12 +183,19 @@ class ChatService {
           chatId: chatId, limit: 20, messageId: lastMessageId);
 
       if (messagesResponse?.messages.isNotEmpty == true) {
+        _chatMessages.putIfAbsent(chatId, () => []);
+        _seenMessageIds.putIfAbsent(chatId, () => <int>{});
+
+        // Filter out duplicates by ID
+        final existingIds = _seenMessageIds[chatId]!;
+        final unique = messagesResponse!.messages
+            .where((m) => !existingIds.contains(m.id))
+            .toList();
+
         // Insert fetched messages at the start of the existing list
-        if (_chatMessages.containsKey(chatId)) {
-          _chatMessages[chatId]!.insertAll(0, messagesResponse!.messages);
-        } else {
-          _chatMessages[chatId] =
-              List<Message>.from(messagesResponse!.messages);
+        if (unique.isNotEmpty) {
+          _chatMessages[chatId]!.insertAll(0, unique);
+          existingIds.addAll(unique.map((m) => m.id));
         }
 
         return messagesResponse.messages;
@@ -194,23 +210,32 @@ class ChatService {
 
   /// Add message to chat
   void addMessage(int chatId, Message message) {
-    if (!_chatMessages.containsKey(chatId)) {
-      _chatMessages[chatId] = [];
+    _chatMessages.putIfAbsent(chatId, () => []);
+    _seenMessageIds.putIfAbsent(chatId, () => <int>{});
+    // Skip if we've already seen this message ID
+    if (_seenMessageIds[chatId]!.contains(message.id) ||
+        _chatMessages[chatId]!.any((m) => m.id == message.id)) {
+      return;
     }
-    ;
     _chatMessages[chatId]!.add(message);
-    
-    // Always update the chat list
+    _seenMessageIds[chatId]!.add(message.id);
+
+    // Update the chat list for last message display
     updateChatListWithMessage(chatId, message);
   }
 
   /// Update chat list with new message (used for last message display)
-  void updateChatListWithMessage(int chatId, Message message) {
+  void updateChatListWithMessage(int chatId, Message message, {bool incrementUnread = true}) {
     // Update last message in chat
     if (_chats.containsKey(chatId)) {
-      _chats[chatId]!.lastMessage = message;
-      _chats[chatId]!.lastMessageTime = message.createdAt;
-      _chats[chatId]!.unreadCount += 1; // Increment unread count
+      final chat = _chats[chatId]!;
+      // Only increment unread if requested and this isn't the same as last
+      final isSameLast = (chat.lastMessage?.id == message.id);
+      chat.lastMessage = message;
+      chat.lastMessageTime = message.createdAt;
+      if (incrementUnread && !isSameLast) {
+        chat.unreadCount += 1;
+      }
 
       loadChatList().then((sortedChats) {
         _chatListController.add(sortedChats);
@@ -269,20 +294,30 @@ class ChatService {
     try {
       final message = Message.fromJson(messageData);
 
-      // Always update the chat list with the latest message for display
-      updateChatListWithMessage(message.chatId, message);
+      // Initialize caches
+      _chatMessages.putIfAbsent(message.chatId, () => []);
+      _seenMessageIds.putIfAbsent(message.chatId, () => <int>{});
+
+      // De-duplication: if we've already seen this message ID, ignore entirely
+      if (_seenMessageIds[message.chatId]!.contains(message.id) ||
+          _chatMessages[message.chatId]!.any((m) => m.id == message.id)) {
+        return;
+      }
 
       // Check if this chat has an active screen that will handle the message
       if (_activeChatScreens.contains(message.chatId)) {
+        // Update last message but do not increment unread
+        updateChatListWithMessage(message.chatId, message, incrementUnread: false);
         print('📨 Chat list updated for chat ${message.chatId} - message handled by active chat screen');
         return;
       }
 
       // Add to local message cache only for chats without active screens
-      if (!_chatMessages.containsKey(message.chatId)) {
-        _chatMessages[message.chatId] = [];
-      }
       _chatMessages[message.chatId]!.add(message);
+      _seenMessageIds[message.chatId]!.add(message.id);
+
+      // Update chat list and increment unread normally
+      updateChatListWithMessage(message.chatId, message, incrementUnread: true);
 
       print('📨 Received message for chat ${message.chatId}');
     } catch (e) {

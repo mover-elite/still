@@ -437,27 +437,42 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         }
       } else {
         Message newMessage = Message.fromJson(messageData);
-        
+
+        // If this is an update to a pending message, replace it
         if (newMessage.referenceId != null) {
           final index = _messages
               .indexWhere((msg) => msg.referenceId == newMessage.referenceId);
           if (index != -1) {
             print("Found reference message, updating: ${newMessage.referenceId}");
             _messages[index] = newMessage;
-            
-            // Update chat list when replacing a pending message
-            ChatService().updateChatListWithMessage(_chat!.id, newMessage);
+            // Update chat list when replacing a pending message (do not increment unread)
+            ChatService()
+                .updateChatListWithMessage(_chat!.id, newMessage, incrementUnread: false);
             return;
           }
         }
-          print("Adding new message: ${newMessage.id}");
-        _messages.add(newMessage);
-        
-        // Update chat list with the new message
-        if (_chat != null) {
-          ChatService().updateChatListWithMessage(_chat!.id, newMessage);
+
+        // De-duplicate: if message with same id already exists, do nothing further
+        final alreadyExists = _messages.any((m) => m.id == newMessage.id);
+        if (alreadyExists) {
+          print("Duplicate message ignored: ${newMessage.id}");
+          // Still ensure last message is updated without unread bump
+          if (_chat != null) {
+            ChatService()
+                .updateChatListWithMessage(_chat!.id, newMessage, incrementUnread: false);
+          }
+          return;
         }
-        
+
+        print("Adding new message: ${newMessage.id}");
+        _messages.add(newMessage);
+
+        // Update chat list with the new message (do not increment unread while chat is active)
+        if (_chat != null) {
+          ChatService()
+              .updateChatListWithMessage(_chat!.id, newMessage, incrementUnread: false);
+        }
+
         if (newMessage.senderId != _currentUserId) {
           WebSocketService().sendReadReceipt([newMessage.id]);
         }
