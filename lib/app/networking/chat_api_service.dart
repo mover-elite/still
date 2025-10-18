@@ -4,6 +4,7 @@ import 'package:flutter_app/app/models/chat_messages_response.dart';
 import 'package:flutter_app/app/models/media_response.dart';
 import 'package:flutter_app/app/models/user.dart';
 import 'package:nylo_framework/nylo_framework.dart';
+import '../models/group_creation_response.dart';
 import '/app/models/chat.dart';
 import '/app/networking/api_service.dart';
 import "/app/models/chat_list_response.dart";
@@ -123,6 +124,7 @@ class ChatApiService extends ApiService {
       ),
     );  
   }
+  
   Future<List<MediaResponse>?> getChatFiles(int chatId) async {
     return await network<List<MediaResponse>>(
       request: (request) => request.get(
@@ -132,6 +134,28 @@ class ChatApiService extends ApiService {
         },
       ),
     );  
+  }
+
+  Future<GroupCreationResponse?> createGroupChat(
+    String groupName, 
+    String groupDescription, 
+    List<int> memberIds,
+    String? filePath,
+    ) async {
+    return await network<GroupCreationResponse>(
+      request: (request) => request.post(
+        "/chat/group",
+        data: FormData.fromMap({
+          "name": groupName,
+          "description": groupDescription,
+          "members": memberIds,
+          if (filePath != null) "avatar": MultipartFile.fromFileSync(
+            filePath,
+            filename: filePath.split('/').last,
+          ),
+        }),
+      ),
+    );
   }
 
   Future<List<LinkResponse>?> getChatLinks(int chatId) async {

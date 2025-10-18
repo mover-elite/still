@@ -478,10 +478,42 @@ class ChatService {
     _chatListController.add(_chats.values.toList());
   }
 
-  /// Clear chat cache
+  /// Clear chat cache and reset all user-specific data
   void clearCache() {
+    print('🧹 Clearing ChatService cache...');
+    
+    // Clear all cached data
     _chats.clear();
     _chatMessages.clear();
+    _hasLoadInitialMessages.clear();
+    _activeChatScreens.clear();
+    
+    // Reset initialization flag
+    _isInitialized = false;
+    
+    // Notify all listeners with empty data
+    _chatListController.add([]);
+    
+    print('✅ ChatService cache cleared');
+  }
+
+  /// Comprehensive logout cleanup
+  Future<void> logoutCleanup() async {
+    print('🔓 Starting ChatService logout cleanup...');
+    
+    try {
+      // Clear all cached data
+      clearCache();
+      
+      // Disconnect WebSocket
+      await WebSocketService().disconnect();
+      print('✅ WebSocket disconnected');
+      
+      print('✅ ChatService logout cleanup completed');
+    } catch (e) {
+      print('❌ Error during ChatService logout cleanup: $e');
+      rethrow;
+    }
   }
 
   /// Dispose resources

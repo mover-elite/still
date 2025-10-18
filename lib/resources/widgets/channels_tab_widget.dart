@@ -1,6 +1,13 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/app/models/chat_creation_response.dart';
+import 'package:flutter_app/app/models/group_creation_response.dart';
+import 'package:flutter_app/app/networking/chat_api_service.dart';
 import 'package:nylo_framework/nylo_framework.dart';
+import 'package:image_picker/image_picker.dart';
+import '/app/services/chat_service.dart';
+import '/app/models/chat.dart' as models;
 
 class ChannelsTab extends StatefulWidget {
   const ChannelsTab({super.key});
@@ -51,16 +58,100 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   // Add missing variable for alphabet scroll
   String _currentActiveLetter = '';
 
+  // Channel image picking state
+  final ImagePicker _channelImagePicker = ImagePicker();
+  File? _selectedChannelImage;
+  bool _isCreatingChannel = false;
+
+  Future<void> _pickChannelImage() async {
+    try {
+      final XFile? picked = await _channelImagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+        maxWidth: 2048,
+      );
+      if (!mounted) return;
+      if (picked != null) {
+        final newFile = File(picked.path);
+        // Evict any cached image for this file path to avoid stale previews
+        try { await FileImage(newFile).evict(); } catch (_) {}
+        setState(() {
+          _selectedChannelImage = newFile;
+        });
+      }
+    } catch (e) {
+      // Silently ignore for now; could add a toast/snackbar
+    }
+  }
+
   @override
   get init => () {};
+
+  Future<void> _handleCreateChannelPressed({
+    required String name,
+    required String description,
+  }) async {
+    if (_isCreatingChannel) return;
+    final trimmedName = name.trim();
+    
+    if (trimmedName.isEmpty) {
+      HapticFeedback.lightImpact();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a channel name'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isCreatingChannel = true);
+    try {
+      List<int> members = [];
+      // Close the create sheet and move to type/settings, passing the selected image
+      GroupCreationResponse? response = await ChatApiService().createGroupChat(
+        trimmedName,
+        description.trim(),
+        members,
+        _selectedChannelImage?.path,
+      );
+      if (response == null) {
+        throw Exception('Failed to create channel');
+      }
+      
+      Navigator.pop(context);
+      _showChannelTypeSettings(response);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to start channel creation: $e'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isCreatingChannel = false);
+    }
+  }
 
   void _showCreateChannelFlow() {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => _CreateChannelStep1(),
-    );
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (modalContext, modalSetState) {
+            void refresh() => modalSetState(() {});
+            return _CreateChannelStep1(refresh);
+          },
+        );
+      },
+    ).whenComplete(() {
+      if (!mounted) return;
+      setState(() {
+        _selectedChannelImage = null;
+      });
+    });
   }
 
   @override
@@ -360,10 +451,10 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
     );
   }
 
-  Widget _CreateChannelStep1() {
+  Widget _CreateChannelStep1([void Function()? refresh]) {
     final TextEditingController nameController = TextEditingController();
     final TextEditingController descriptionController = TextEditingController();
-
+  
     return Container(
       height: MediaQuery.of(context).size.height * 0.85,
       decoration: const BoxDecoration(
@@ -407,7 +498,22 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(width: 60),
+                TextButton(
+                  onPressed: _isCreatingChannel
+                      ? null
+                      : () => _handleCreateChannelPressed(
+                            name: nameController.text,
+                            description: descriptionController.text,
+                          ),
+                  child: Text(
+                    _isCreatingChannel ? 'Creating…' : 'Create',
+                    style: const TextStyle(
+                      color: Color(0xFF3498DB),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -420,15 +526,32 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                   // Camera icon and Channel Name on same row
                   Row(
                     children: [
-                      Container(
-                        width: 60,
-                        height: 60,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                              color: const Color(0xFF3498DB), width: 2),
+                      GestureDetector(
+                        onTap: () async {
+                          await _pickChannelImage();
+                          // Ensure the bottom sheet rebuilds immediately
+                          if (refresh != null) refresh();
+                        },
+                        child: Container(
+                          width: 60,
+                          height: 60,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                                color: const Color(0xFF3498DB), width: 2),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: ClipOval(
+                            key: ValueKey(_selectedChannelImage?.path ?? 'no-image'),
+                            child: _selectedChannelImage != null
+                                ? Image.file(
+                                    _selectedChannelImage!,
+                                    fit: BoxFit.cover,
+                                    key: ValueKey(_selectedChannelImage!.path),
+                                  )
+                                : Image.asset("channel_camera.png").localAsset(),
+                          ),
                         ),
-                        child: Image.asset("channel_camera.png").localAsset(),
                       ),
                       const SizedBox(width: 16),
                       Expanded(
@@ -545,35 +668,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                     ),
                   ),
 
-                  const SizedBox(height: 32), // Fixed spacing instead of Spacer
-
-                  // Next button
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _showChannelTypeSettings(
-                            nameController.text, descriptionController.text);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xffC8DEFC),
-                        foregroundColor: Color(0xFFE8E7EA),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(1),
-                        ),
-                      ),
-                      child: const Text(
-                        'Next',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Color(0xff121417),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
+                  const SizedBox(height: 16),
                 ],
               ),
             ),
@@ -581,20 +676,22 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
         ],
       ),
     );
+
+    
   }
 
-  void _showChannelTypeSettings(String channelName, String description) {
+  void _showChannelTypeSettings(GroupCreationResponse channelInfo) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => _ChannelTypeScreen(channelName, description),
+        builder: (context) => _ChannelTypeScreen(channelInfo),
       ),
     );
   }
 
-  Widget _ChannelTypeScreen(String channelName, String description) {
-    bool isPrivate = true;
-    bool restrictContent = false;
+  Widget _ChannelTypeScreen(GroupCreationResponse channelInfo) {
+    bool isPrivate = channelInfo.isPublic;
+    bool restrictContent = channelInfo.restrictContent ?? false;
 
     return StatefulBuilder(
       builder: (context, setModalState) {
@@ -797,13 +894,18 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 8, vertical: 12),
                               child: Row(
-                                mainAxisSize: MainAxisSize.min,
+                                mainAxisSize: MainAxisSize.max,
                                 children: [
-                                  Text(
-                                    's.me/+CGHSDhdkgjudkj',
-                                    style: const TextStyle(
-                                      color: Color(0xFFE8E7EA),
-                                      fontSize: 18,
+                                  // Allow the invite text to shrink and ellipsize instead of overflowing
+                                  Flexible(
+                                    child: Text(
+                                      's.me/+${channelInfo.inviteCode}',
+                                      style: const TextStyle(
+                                        color: Color(0xFFE8E7EA),
+                                        fontSize: 18,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
                                     ),
                                   ),
                                   const SizedBox(width: 12),
@@ -1006,6 +1108,11 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
 
   Widget _ContactSelection() {
     List<Contact> selectedContacts = [];
+    // Selected PRIVATE chats from recent row
+    Set<int> selectedChatIds = {};
+    // Top PRIVATE chats state for recent row
+    List<models.Chat> topPrivateChats = [];
+    bool loadedTopChats = false;
 
     return StatefulBuilder(
       builder: (context, setModalState) {
@@ -1038,7 +1145,6 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
               Container(
                 padding: const EdgeInsets.all(8),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     TextButton(
                       onPressed: () => Navigator.pop(context),
@@ -1050,14 +1156,35 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                             fontWeight: FontWeight.w400),
                       ),
                     ),
-                    const Text(
-                      'Contact',
-                      style: TextStyle(
-                          color: Color(0xFFFFFFFF),
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600),
+                    const Expanded(
+                      child: Center(
+                        child: Text(
+                          'Contact',
+                          style: TextStyle(
+                              color: Color(0xFFFFFFFF),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
                     ),
-                    const SizedBox(width: 60),
+                    TextButton(
+                      onPressed: (selectedContacts.length + selectedChatIds.length) > 0
+                          ? () {
+                              // TODO: handle sending selected contacts/chats
+                              Navigator.pop(context);
+                            }
+                          : null,
+                      child: Text(
+                        (selectedContacts.length + selectedChatIds.length) > 0
+                            ? 'Add (${selectedContacts.length + selectedChatIds.length})'
+                            : 'Add',
+                        style: const TextStyle(
+                          color: Color(0xFF3498DB),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -1097,65 +1224,97 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
 
               const SizedBox(height: 20),
 
-              // Recent contacts row
-              Container(
-                height: 80,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: 5,
-                  itemBuilder: (context, index) {
-                    final contact = _contacts[index];
-                    final isSelected = selectedContacts.contains(contact);
-                    return Container(
-                      margin: const EdgeInsets.only(right: 16),
-                      child: GestureDetector(
-                        onTap: () {
-                          setModalState(() {
-                            if (selectedContacts.contains(contact)) {
-                              selectedContacts.remove(contact);
-                            } else {
-                              selectedContacts.add(contact);
-                            }
-                          });
-                        },
-                        child: Column(
-                          children: [
-                            Container(
-                              width: 47,
-                              height: 47,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.grey.shade700,
-                                border: isSelected
-                                    ? Border.all(
-                                        color: Color(0xFF57A1FF), width: 2)
-                                    : null,
+              // Recent contacts row (Top PRIVATE chats from ChatService)
+              Builder(builder: (context) {
+                if (!loadedTopChats) {
+                  loadedTopChats = true;
+                  WidgetsBinding.instance.addPostFrameCallback((_) async {
+                    try {
+                      if (!ChatService().isInitialized) {
+                        await ChatService().initialize();
+                      }
+                      final chats = await ChatService().loadChatList();
+                      final filtered = chats.where((c) => c.type == 'PRIVATE').take(10).toList();
+                      setModalState(() {
+                        topPrivateChats = filtered;
+                      });
+                    } catch (_) {
+                      setModalState(() {
+                        topPrivateChats = [];
+                      });
+                    }
+                  });
+                }
+
+                return Container(
+                  height: 80,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: topPrivateChats.length,
+                    itemBuilder: (context, index) {
+                      final chat = topPrivateChats[index];
+                      final displayName = chat.name;
+                      final avatarUrl = chat.avatar ?? chat.partner?.avatar;
+                      final isSelected = selectedChatIds.contains(chat.id);
+
+                      Widget avatarWidget;
+                      if (avatarUrl != null && avatarUrl.startsWith('http')) {
+                        avatarWidget = Image.network(avatarUrl, fit: BoxFit.cover);
+                      } else if (avatarUrl != null && avatarUrl.isNotEmpty) {
+                        avatarWidget = Image.asset(avatarUrl, fit: BoxFit.cover).localAsset();
+                      } else {
+                        avatarWidget = Image.asset('image1.png', fit: BoxFit.cover).localAsset();
+                      }
+
+                      return Container(
+                        margin: const EdgeInsets.only(right: 16),
+                        child: GestureDetector(
+                          onTap: () {
+                            setModalState(() {
+                              if (isSelected) {
+                                selectedChatIds.remove(chat.id);
+                              } else {
+                                selectedChatIds.add(chat.id);
+                              }
+                            });
+                          },
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 47,
+                                height: 47,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.grey.shade700,
+                                  border: isSelected
+                                      ? Border.all(color: const Color(0xFF57A1FF), width: 2)
+                                      : null,
+                                ),
+                                child: ClipOval(child: avatarWidget),
                               ),
-                              child: ClipOval(
-                                child: Image.asset(
-                                  contact.image,
-                                  fit: BoxFit.cover,
-                                ).localAsset(),
+                              const SizedBox(height: 4),
+                              SizedBox(
+                                width: 60,
+                                child: Text(
+                                  displayName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: isSelected ? const Color(0xFF57A1FF) : const Color(0xFFC4C6C8),
+                                    fontSize: 10,
+                                  ),
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              contact.name,
-                              style: TextStyle(
-                                color: isSelected
-                                    ? Color(0xFF57A1FF)
-                                    : Color(0xFFC4C6C8),
-                                fontSize: 10,
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                ),
-              ),
+                      );
+                    },
+                  ),
+                );
+              }),
 
               // Invite link section
               Container(
@@ -1370,57 +1529,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                 ),
               ),
 
-              // Send button
-              Container(
-                color: const Color(0xFF161518),
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    decoration: BoxDecoration(
-                      color: Color(0xFFC8DEFC),
-                      borderRadius: BorderRadius.circular(25),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Text(
-                          'Send',
-                          style: TextStyle(
-                              color: Color(0xFF121417),
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700),
-                        ),
-                        if (selectedContacts.isNotEmpty) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            width: 20,
-                            height: 20,
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Center(
-                              child: Text(
-                                '${selectedContacts.length}',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                        const SizedBox(width: 8),
-                        const Icon(Icons.send,
-                            color: Color(0xFF121417), size: 16),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+              // Removed bottom Send bar; action moved to header
             ],
           ),
         );

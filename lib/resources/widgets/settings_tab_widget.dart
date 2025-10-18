@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_app/app/networking/chat_api_service.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'package:image_picker/image_picker.dart';
+import '/app/services/chat_service.dart';
 
 class SettingsTab extends StatefulWidget {
   const SettingsTab({super.key});
@@ -53,6 +54,10 @@ class _SettingsTabState extends NyState<SettingsTab> {
     );
 
     try {
+      // Clear ChatService cache and disconnect WebSocket using consolidated method
+      await ChatService().logoutCleanup();
+      print('✅ ChatService logout cleanup completed');
+      
       // Clear local auth data first - this is most important
       await Auth.logout();
 
@@ -62,7 +67,13 @@ class _SettingsTabState extends NyState<SettingsTab> {
     } catch (e) {
       print('Error during logout: $e');
       
-      // Make sure auth is cleared even if there's an error
+      // Make sure chat cache and websocket are cleared even if there's an error
+      try {
+        await ChatService().logoutCleanup();
+      } catch (e) {
+        print('Error during ChatService cleanup in error handling: $e');
+      }
+      
       await Auth.logout();
       
       // Try the most direct way to get back to sign-in

@@ -64,6 +64,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   // WebSocket integration
   StreamSubscription<Map<String, dynamic>>? _wsSubscription;
   StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
+  StreamSubscription<bool>? _connectionStatusSubscription;
 
   bool _isWebSocketConnected = false;
 
@@ -76,6 +77,11 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   bool _isAudioPlaying = false;
   Duration _audioPosition = Duration.zero;
   Duration _audioDuration = Duration.zero;
+  
+  // Audio player subscriptions
+  StreamSubscription<Duration>? _audioDurationSubscription;
+  StreamSubscription<Duration>? _audioPositionSubscription;
+  StreamSubscription<void>? _audioCompleteSubscription;
 
   // Message interaction state
   final TextEditingController _textController = TextEditingController();
@@ -212,15 +218,19 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
 
         _wsSubscription =
             WebSocketService().messageStream.listen((messageData) {
-          _handleIncomingMessage(messageData);
+          if (mounted) {
+            _handleIncomingMessage(messageData);
+          }
         });
 
         _notificationSubscription =
             WebSocketService().notificationStream.listen((notificationData) {
-          _handleIncomingNotification(notificationData);
+          if (mounted) {
+            _handleIncomingNotification(notificationData);
+          }
         });
 
-        WebSocketService().connectionStatusStream.listen((isConnected) {
+        _connectionStatusSubscription = WebSocketService().connectionStatusStream.listen((isConnected) {
           if (mounted) {
             setState(() {
               _isWebSocketConnected = isConnected;
@@ -292,9 +302,11 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   Future<void> _loadMoreMessagesAtTop() async {
     if (_isLoadingAtTop) return;
 
-    setState(() {
-      _isLoadingAtTop = true;
-    });
+    if (mounted) {
+      setState(() {
+        _isLoadingAtTop = true;
+      });
+    }
 
     print("🔄 Loading more messages from top...");
 
@@ -306,10 +318,12 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
 
     // Here you would typically load older messages from your API
     // For now, we'll just simulate the loading completion
-    setState(() {
-      _isLoadingAtTop = false;
-      _messages.insertAll(0, messages);
-    });
+    if (mounted) {
+      setState(() {
+        _isLoadingAtTop = false;
+        _messages.insertAll(0, messages);
+      });
+    }
 
     print("✅ Finished loading messages from top");
   }
@@ -490,9 +504,15 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
     // as it might be used by other screens
     _wsSubscription?.cancel();
     _notificationSubscription?.cancel();
+    _connectionStatusSubscription?.cancel();
     _recordingTimer?.cancel();
     _headerVisibilityTimer?.cancel(); // Dispose the header visibility timer
     _audioRecorder.dispose();
+    
+    // Cancel audio player subscriptions before disposing
+    _audioDurationSubscription?.cancel();
+    _audioPositionSubscription?.cancel();
+    _audioCompleteSubscription?.cancel();
     _audioPlayer?.dispose();
     _previewChewieController?.dispose();
     _previewVideoController?.dispose();
@@ -506,39 +526,58 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       // Stop any currently playing audio
       if (_audioPlayer != null) {
         await _audioPlayer!.stop();
+        
+        // Cancel existing subscriptions
+        _audioDurationSubscription?.cancel();
+        _audioPositionSubscription?.cancel();
+        _audioCompleteSubscription?.cancel();
+        
         await _audioPlayer!.dispose();
       }
       
       _audioPlayer = AudioPlayer();
 
-      setState(() {
-        _playingMessageId = message.id;
-        _isAudioPlaying = true;
-        _audioPosition = Duration.zero;
-        _audioDuration = Duration.zero;
-      });
+      if (mounted) {
+        setState(() {
+          _playingMessageId = message.id;
+          _isAudioPlaying = true;
+          _audioPosition = Duration.zero;
+          _audioDuration = Duration.zero;
+        });
+      }
+
+      // Cancel any existing subscriptions
+      _audioDurationSubscription?.cancel();
+      _audioPositionSubscription?.cancel();
+      _audioCompleteSubscription?.cancel();
 
       // Listen to duration changes
-      _audioPlayer!.onDurationChanged.listen((duration) {
-        setState(() {
-          _audioDuration = duration;
-        });
+      _audioDurationSubscription = _audioPlayer!.onDurationChanged.listen((duration) {
+        if (mounted) {
+          setState(() {
+            _audioDuration = duration;
+          });
+        }
       });
 
       // Listen to position changes
-      _audioPlayer!.onPositionChanged.listen((position) {
-        setState(() {
-          _audioPosition = position;
-        });
+      _audioPositionSubscription = _audioPlayer!.onPositionChanged.listen((position) {
+        if (mounted) {
+          setState(() {
+            _audioPosition = position;
+          });
+        }
       });
 
       // Listen to completion
-      _audioPlayer!.onPlayerComplete.listen((event) {
-        setState(() {
-          _isAudioPlaying = false;
-          _playingMessageId = null;
-          _audioPosition = Duration.zero;
-        });
+      _audioCompleteSubscription = _audioPlayer!.onPlayerComplete.listen((event) {
+        if (mounted) {
+          setState(() {
+            _isAudioPlaying = false;
+            _playingMessageId = null;
+            _audioPosition = Duration.zero;
+          });
+        }
       });
 
       // Play the audio file
@@ -561,9 +600,11 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   Future<void> _pauseAudioMessage() async {
     if (_audioPlayer != null) {
       await _audioPlayer!.pause();
-      setState(() {
-        _isAudioPlaying = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isAudioPlaying = false;
+        });
+      }
     }
   }
 
@@ -786,12 +827,14 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
             type: type,
           );
           print("Message sent via API");
-          setState(() {
-            _pickedImage = null; // Clear the picked image after sending
-            _pickedVideo = null; // Clear the picked video after sending
-            _pickedDocumentPath = null;
-            _pickedDocumentName = null;
-          });
+          if (mounted) {
+            setState(() {
+              _pickedImage = null; // Clear the picked image after sending
+              _pickedVideo = null; // Clear the picked video after sending
+              _pickedDocumentPath = null;
+              _pickedDocumentName = null;
+            });
+          }
           
           // if (result != null) {}
         } catch (e) {
@@ -1070,9 +1113,13 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         
         // Start recording timer
         _recordingTimer = Timer.periodic(Duration(seconds: 1), (timer) {
-          setState(() {
-            _recordingDuration++;
-          });
+          if (mounted) {
+            setState(() {
+              _recordingDuration++;
+            });
+          } else {
+            timer.cancel(); // Cancel timer if widget is disposed
+          }
         });
         
         print('Recording started at: $recordingPath');
@@ -1841,9 +1888,17 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
-                  color: isSentByMe
-                      ? const Color(0xFF18365B)
-                      : const Color(0xFF404040),
+                    gradient: isSentByMe
+                      ? const LinearGradient(
+                        colors: [Color(0xFF18365B), Color(0xFF163863)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      )
+                      : const LinearGradient(
+                        colors: [Color(0xFF3C434C), Color(0xFF262D35)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
                   borderRadius: isSentByMe
                       ? const BorderRadius.only(
                           topLeft: Radius.circular(18),
@@ -3900,7 +3955,17 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: isSentByMe ? const Color(0xFF18365B) : const Color(0xFF404040),
+                    gradient: isSentByMe
+                        ? null
+                        : const LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Color(0xFF18365B),
+                              Color(0xFF163863),
+                            ],
+                          ),
+                    color: isSentByMe ? const Color(0xFF18365B) : null,
                     borderRadius: isSentByMe
                         ? const BorderRadius.only(
                             topLeft: Radius.circular(16),

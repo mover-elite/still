@@ -1,6 +1,7 @@
 import 'package:flutter_app/app/models/chat_links_response.dart';
 import 'package:flutter_app/app/models/media_response.dart';
 
+import '../app/models/group_creation_response.dart';
 import '/app/controllers/home_controller.dart';
 import '/app/models/chat.dart';
 import '/app/models/user.dart';
@@ -43,7 +44,7 @@ final Map<Type, dynamic> modelDecoders = {
   
   List<LinkResponse>: (data) =>
     List.from(data).map((json) => LinkResponse.fromJson(json)).toList(),
-  
+  GroupCreationResponse: (data) => GroupCreationResponse.fromJson(data),
   // To handle nullable lists, decode as List<SearchUser> and handle nulls outside the decoder.
   // SearchCharResponse: (data) => SearchCharResponse.fromJson(data),
 };
