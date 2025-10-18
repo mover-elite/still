@@ -13,7 +13,7 @@ class Chat {
   final String? inviteCode;
   final DateTime createdAt;
   final DateTime updatedAt;
-
+  final String? description;
   Message? lastMessage;
   DateTime? lastMessageTime;
 
@@ -41,6 +41,7 @@ class Chat {
     this.lastMessageTime,
     this.unreadCount = 0,
     this.avatar,
+    this.description,
     this.isOnline = false,
     this.isGroup = false,
     this.participants = const [],
@@ -54,6 +55,7 @@ class Chat {
       creatorId: json['creatorId'],
       type: json['type'] ?? 'PRIVATE',
       isPublic: json['isPublic'] ?? false,
+      description: json['description'],
       inviteCode: json['inviteCode'],
       partnerId: json['partnerId'] != null
           ? int.tryParse(json['partnerId'].toString())

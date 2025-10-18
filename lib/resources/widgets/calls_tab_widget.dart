@@ -267,6 +267,7 @@ class _CallsTabState extends NyState<CallsTab> {
                     'userName': contact.name,
                     'userImage': contact.image,
                     'isOnline': contact.isOnline,
+                    'description': '',
                   });
                 },
                 child: Container(
@@ -377,6 +378,7 @@ class _CallsTabState extends NyState<CallsTab> {
               routeTo(ProfileDetailsPage.path, data: {
                 'userName': call.contact.name,
                 'userImage': call.contact.image,
+                'description': '',
               });
             },
             child: Container(

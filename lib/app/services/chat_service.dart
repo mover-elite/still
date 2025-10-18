@@ -78,6 +78,23 @@ class ChatService {
     }
   }
 
+
+  Future<void> updateChatAvatarImage(int chatId, String imagePath) async {
+    try {
+      await ChatApiService().uploadGroupAvatarImage(imagePath, chatId);
+    final updatedChat = await ChatApiService().getChatDetails(chatId: chatId);
+    if (updatedChat != null) {
+      _chats[chatId] = updatedChat;
+      _chatController.add(updatedChat);
+      _chatListController.add(_chats.values.toList());
+    }
+      print('✅ Chat avatar updated successfully for chat $chatId');
+    } catch (e) {
+      print('❌ Error updating chat avatar: $e');
+      rethrow;
+    }
+  }
+  
   /// Load chat list from API
   Future<List<Chat>> loadChatList() async {
     try {

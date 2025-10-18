@@ -55,6 +55,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   Chat? _chat;
   String _userName = 'Ahmad';
   String? _userImage;
+  String? _description;
   bool _isOnline = false;
   Set<int> _typingUsers = {};
 
@@ -143,13 +144,13 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
 
         if (navigationData != null) {
           final chatId = navigationData['chatId'] as int?;
-
+          print("Description: ${navigationData['description']}");
           
           if (chatId != null) {
             _chat = await ChatService().getChatDetails(chatId);
             final messages = await ChatService().getChatMessages(chatId);
-
             
+            _description  = navigationData['description'] as String? ?? '';
             if (_chat != null) {
               if (_chat!.type == 'PRIVATE' && _chat!.partner != null) {
                 _userName = _chat!.name;
@@ -1242,6 +1243,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                             'userName': _userName,
                             'userImage': _userImage,
                             'isOnline': _isOnline,
+                            'description': _description,
                           }),
                           child: Container(
                           width: 32,
@@ -1275,6 +1277,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                               'userName': _userName,
                               'userImage': _userImage,
                               'isOnline': _isOnline,
+                              'description': _description,
                             }),
                             child: Column(
                             crossAxisAlignment: CrossAxisAlignment
@@ -1292,37 +1295,54 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                                 ),
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment
-                                    .center, // This centers the row content
-                                children: [
-                                  if (_typingUsers.isEmpty)
-                                    Container(
-                                      width: 4,
-                                      height: 4,
-                                      decoration: BoxDecoration(
-                                        color: _isOnline
-                                            ? const Color(0xFF2ECC71)
-                                            : Colors.grey.shade500,
-                                        shape: BoxShape.circle,
+                              Builder(builder: (_) {
+                                final isChannel = _chat?.type == 'CHANNEL';
+                                if (isChannel) {
+                                  final membersCount = _chat?.participants.length ?? 0;
+                                  return Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        '$membersCount Members',
+                                        style: TextStyle(
+                                          color: Colors.grey.shade500,
+                                          fontSize: 8,
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                }
+                                return Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    if (_typingUsers.isEmpty)
+                                      Container(
+                                        width: 4,
+                                        height: 4,
+                                        decoration: BoxDecoration(
+                                          color: _isOnline
+                                              ? const Color(0xFF2ECC71)
+                                              : Colors.grey.shade500,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      _typingUsers.isNotEmpty
+                                          ? 'Typing...'
+                                          : (_isOnline ? 'Online' : 'Offline'),
+                                      style: TextStyle(
+                                        color: _typingUsers.isNotEmpty
+                                            ? const Color(0xFF3498DB)
+                                            : (_isOnline
+                                                ? const Color(0xFF2ECC71)
+                                                : Colors.grey.shade500),
+                                        fontSize: 8,
                                       ),
                                     ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    _typingUsers.isNotEmpty
-                                        ? 'Typing...'
-                                        : (_isOnline ? 'Online' : 'Offline'),
-                                    style: TextStyle(
-                                      color: _typingUsers.isNotEmpty
-                                          ? const Color(0xFF3498DB)
-                                          : (_isOnline
-                                              ? const Color(0xFF2ECC71)
-                                              : Colors.grey.shade500),
-                                      fontSize: 8,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                  ],
+                                );
+                              }),
                             ],
                             ),
                           ),

@@ -80,6 +80,22 @@ class ChatApiService extends ApiService {
     );
   }
 
+  
+  Future<UploadAvatarResponse?> uploadGroupAvatarImage(
+      String filePath, int groupId) async {
+    return await network<UploadAvatarResponse>(
+      request: (request) => request.put(
+        "/chat/channel/avatar",
+        data: FormData.fromMap({
+          'chatId': groupId,
+          'avatar': MultipartFile.fromFileSync(filePath,
+              filename: filePath.split('/').last),
+        }),
+      ),
+    );
+  }
+
+
   Future<CallResponse?> initiateVideoCall(int chatId) async {
     return await network<CallResponse>(
       request: (request) => request.post(

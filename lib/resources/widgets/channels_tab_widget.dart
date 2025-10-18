@@ -1,13 +1,14 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_app/app/models/chat_creation_response.dart';
 import 'package:flutter_app/app/models/group_creation_response.dart';
 import 'package:flutter_app/app/networking/chat_api_service.dart';
+import 'package:flutter_app/app/utils/chat.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'package:image_picker/image_picker.dart';
 import '/app/services/chat_service.dart';
 import '/app/models/chat.dart' as models;
+import '/resources/pages/chat_screen_page.dart';
 
 class ChannelsTab extends StatefulWidget {
   const ChannelsTab({super.key});
@@ -18,30 +19,12 @@ class ChannelsTab extends StatefulWidget {
 
 class _ChannelsTabState extends NyState<ChannelsTab> {
   bool _showMyChannels = true;
+  bool _isLoadingMyChannels = false;
+  bool _myChannelsError = false;
   List<Channel> _myChannels = [];
-  List<Channel> _joinedChannels = [
-    Channel(
-      name: "Fast Cars Reviewers Club",
-      description:
-          "McLaren Artura Spider, A combination of Twin-Turbocharged V6 Petrol Engine and powerful, ultra-efficient...",
-      image: "image9.png",
-      hasNotification: true,
-    ),
-    Channel(
-      name: "Fast Cars Reviewers Club",
-      description:
-          "McLaren Artura Spider, A combination of Twin-Turbocharged V6 Petrol Engine and powerful, ultra-efficient...",
-      image: "image9.png",
-      hasNotification: true,
-    ),
-    Channel(
-      name: "Fast Cars Reviewers Club",
-      description:
-          "McLaren Artura Spider, A combination of Twin-Turbocharged V6 Petrol Engine and powerful, ultra-efficient...",
-      image: "image9.png",
-      hasNotification: true,
-    ),
-  ];
+  bool _isLoadingJoinedChannels = false;
+  bool _joinedChannelsError = false;
+  List<Channel> _joinedChannels = [];
 
   final List<Contact> _contacts = [
     Contact(name: "Layla B", image: "image2.png"),
@@ -62,6 +45,9 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   final ImagePicker _channelImagePicker = ImagePicker();
   File? _selectedChannelImage;
   bool _isCreatingChannel = false;
+  // Persisted controllers to avoid losing text on rebuilds
+  final TextEditingController _channelNameController = TextEditingController();
+  final TextEditingController _channelDescriptionController = TextEditingController();
 
   Future<void> _pickChannelImage() async {
     try {
@@ -85,7 +71,101 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   }
 
   @override
-  get init => () {};
+  get init => () {
+        _loadMyChannels();
+      };
+
+  Future<void> _loadMyChannels() async {
+    setState(() {
+      _isLoadingMyChannels = true;
+      _myChannelsError = false;
+    });
+    try {
+      // Ensure chat service is ready
+      if (!ChatService().isInitialized) {
+        await ChatService().initialize();
+      }
+      final userData = await Auth.data();
+      final uid = userData != null ? userData['id'] as int? : null;
+      final chats = await ChatService().loadChatList();
+      final myChannelChats = chats.where((c) => c.type == 'CHANNEL' && (uid != null && c.creatorId == uid)).toList();
+
+      final mapped = myChannelChats.map((c) {
+        final image = c.avatar ?? 'image1.png';
+        final desc = c.description ?? '';
+        return Channel(
+          name: c.name,
+          description: desc,
+          image: image,
+          hasNotification: (c.unreadCount > 0),
+          chat: c,
+        );
+      }).toList();
+
+      if (mounted) {
+        setState(() {
+          _myChannels = mapped;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _myChannelsError = true;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingMyChannels = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadJoinedChannels() async {
+    setState(() {
+      _isLoadingJoinedChannels = true;
+      _joinedChannelsError = false;
+    });
+    try {
+      if (!ChatService().isInitialized) {
+        await ChatService().initialize();
+      }
+      final chats = await ChatService().loadChatList();
+  // Joined = All channels the user is in (including those they created)
+  final joined = chats.where((c) => c.type == 'CHANNEL').toList();
+
+      final mapped = joined.map((c) {
+        final image = c.avatar ?? 'image1.png';
+        final desc = c.description ?? '';
+        return Channel(
+          name: c.name,
+          description: desc,
+          image: image,
+          hasNotification: (c.unreadCount > 0),
+          chat: c,
+        );
+      }).toList();
+
+      if (mounted) {
+        setState(() {
+          _joinedChannels = mapped;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _joinedChannelsError = true;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingJoinedChannels = false;
+        });
+      }
+    }
+  }
 
   Future<void> _handleCreateChannelPressed({
     required String name,
@@ -134,6 +214,9 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   }
 
   void _showCreateChannelFlow() {
+    // Reset fields for a fresh create flow but keep during this session
+    _channelNameController.text = '';
+    _channelDescriptionController.text = '';
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -188,6 +271,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                         setState(() {
                           _showMyChannels = true;
                         });
+                        _loadMyChannels();
                       },
                       child: Container(
                         padding: const EdgeInsets.only(bottom: 8),
@@ -216,6 +300,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                         setState(() {
                           _showMyChannels = false;
                         });
+                        _loadJoinedChannels();
                       },
                       child: Container(
                         padding: const EdgeInsets.only(bottom: 8),
@@ -267,6 +352,31 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   }
 
   Widget _buildMyChannelsView() {
+    if (_isLoadingMyChannels) {
+      return const Center(
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
+        ),
+      );
+    }
+
+    if (_myChannelsError) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.redAccent),
+            const SizedBox(height: 8),
+            const Text('Failed to load your channels', style: TextStyle(color: Color(0xFFE8E7EA))),
+            const SizedBox(height: 8),
+            TextButton(onPressed: _loadMyChannels, child: const Text('Retry')),
+          ],
+        ),
+      );
+    }
+
     if (_myChannels.isEmpty) {
       return Column(
         children: [
@@ -330,7 +440,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                         SizedBox(
                           width: 8,
                         ),
-                        Text('Create My Channel',
+                        Text('Create New Channel',
                             style: TextStyle(
                                 fontSize: 16, color: Color(0xffAACFFF))),
                       ],
@@ -343,40 +453,103 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
         ],
       );
     } else {
-      return _buildChannelsList(_myChannels);
+      return Column(
+        children: [
+          Expanded(child: _buildChannelsList(_myChannels)),
+          // Bottom Create Channel button
+          SafeArea(
+            top: false,
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _showCreateChannelFlow,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1C212C),
+                  foregroundColor: const Color(0xFFE8E7EA),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 0,
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.add, size: 16, color: Color(0xffAACFFF)),
+                    SizedBox(width: 8),
+                    Text(
+                      'Create New Channel',
+                      style: TextStyle(fontSize: 16, color: Color(0xffAACFFF)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
     }
   }
 
   Widget _buildJoinedChannelsView() {
-    return Column(
-      children: [
-        // Create My Channel button
-        Container(
-          margin: const EdgeInsets.all(16),
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: _showCreateChannelFlow,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1C212C),
-              foregroundColor: Color(0xFFE8E7EA),
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+    if (_isLoadingJoinedChannels) {
+      return const Center(
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
+        ),
+      );
+    }
+
+    if (_joinedChannelsError) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.redAccent),
+            const SizedBox(height: 8),
+            const Text('Failed to load joined channels', style: TextStyle(color: Color(0xFFE8E7EA))),
+            const SizedBox(height: 8),
+            TextButton(onPressed: _loadJoinedChannels, child: const Text('Retry')),
+          ],
+        ),
+      );
+    }
+
+    if (_joinedChannels.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 100,
+              height: 100,
+              child: Image.asset('channel.png', fit: BoxFit.contain).localAsset(),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'No joined channels yet',
+              style: TextStyle(
+                color: Color(0xFFE8E7EA),
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
               ),
             ),
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.add, size: 14),
-                SizedBox(width: 8),
-                Text('Create My Channel', style: TextStyle(fontSize: 18)),
-              ],
+            const SizedBox(height: 8),
+            Text(
+              'Channels you join will appear here.',
+              style: TextStyle(color: Color(0xFF8E9297), fontSize: 14),
+              textAlign: TextAlign.center,
             ),
-          ),
+          ],
         ),
-        Expanded(child: _buildChannelsList(_joinedChannels)),
-      ],
-    );
+      );
+    }
+
+    return _buildChannelsList(_joinedChannels);
   }
 
   Widget _buildChannelsList(List<Channel> channels) {
@@ -385,76 +558,134 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
       itemCount: channels.length,
       itemBuilder: (context, index) {
         final channel = channels[index];
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1C212C),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: Colors.grey.shade700,
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.asset(
-                    channel.image,
-                    fit: BoxFit.cover,
-                  ).localAsset(),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      channel.name,
-                      style: const TextStyle(
-                        color: Color(0xFFE8E7EA),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      channel.description,
-                      style: TextStyle(
-                        color: Colors.grey.shade400,
-                        fontSize: 14,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              if (channel.hasNotification)
+        return GestureDetector(
+          onTap: () {
+            if (channel.chat != null) {
+              final chat = channel.chat!;
+              final userImage = getChatAvatar(chat, getEnv("API_BASE_URL"));
+              routeTo(ChatScreenPage.path, data: {
+                'chatId': chat.id,
+                'userName': chat.name,
+                'userImage': userImage,
+                'isOnline': false,
+                'description': channel.description,
+              });
+            }
+          },
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              // Remove solid background color for list items
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
                 Container(
-                  width: 12,
-                  height: 12,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF3498DB),
+                  width: 54,
+                  height: 54,
+                  decoration: BoxDecoration(
                     shape: BoxShape.circle,
+                    color: Colors.grey.shade700,
+                  ),
+                  child: ClipOval(
+                    child: _buildChannelImage(channel),
                   ),
                 ),
-            ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        channel.name,
+                        style: const TextStyle(
+                          color: Color(0xFFE8E7EA),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Builder(builder: (_) {
+                        final lastMsg = channel.chat?.lastMessage;
+                        String preview = '';
+                        if (lastMsg != null) {
+                          final txt = (lastMsg.text ?? '').trim();
+                          final cap = (lastMsg.caption ?? '').trim();
+                          preview = txt.isNotEmpty ? txt : cap;
+                        }
+                        if (preview.isEmpty) {
+                          preview = (channel.chat?.description ?? channel.description).trim();
+                        }
+                        return Text(
+                          preview,
+                          style: TextStyle(
+                            color: Colors.grey.shade400,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+                if (channel.hasNotification)
+                  Container(
+                    width: 12,
+                    height: 12,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF3498DB),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+              ],
+            ),
           ),
         );
       },
     );
   }
 
+  Widget _buildChannelImage(Channel channel) {
+    final baseUrl = getEnv("API_BASE_URL") ?? '';
+
+    // Prefer resolving avatar via original chat when available
+    if (channel.chat != null) {
+      final resolved = getChatAvatar(channel.chat!, baseUrl);
+      
+      if (resolved != null) {
+        return Image.network(
+          resolved,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade800),
+        );
+      }
+      
+    }else{
+      return Center(
+      child: Icon(
+        Icons.person,
+        color: Colors.grey.shade300,
+        size: 36,
+      ),
+    );
+    }
+    return Center(
+      child: Icon(
+        Icons.person,
+        color: Colors.grey.shade300,
+        size: 36,
+      ),
+    );
+    
+  }
+
   Widget _CreateChannelStep1([void Function()? refresh]) {
-    final TextEditingController nameController = TextEditingController();
-    final TextEditingController descriptionController = TextEditingController();
-  
     return Container(
       height: MediaQuery.of(context).size.height * 0.85,
       decoration: const BoxDecoration(
@@ -498,22 +729,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                TextButton(
-                  onPressed: _isCreatingChannel
-                      ? null
-                      : () => _handleCreateChannelPressed(
-                            name: nameController.text,
-                            description: descriptionController.text,
-                          ),
-                  child: Text(
-                    _isCreatingChannel ? 'Creating…' : 'Create',
-                    style: const TextStyle(
-                      color: Color(0xFF3498DB),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
+                const SizedBox(width: 60),
               ],
             ),
           ),
@@ -529,7 +745,6 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                       GestureDetector(
                         onTap: () async {
                           await _pickChannelImage();
-                          // Ensure the bottom sheet rebuilds immediately
                           if (refresh != null) refresh();
                         },
                         child: Container(
@@ -558,18 +773,17 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                         child: Container(
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(12),
-                            gradient: LinearGradient(
+                            gradient: const LinearGradient(
                               colors: [
                                 Color(0xFF1F1F1F),
-                                Color(0xB2919191), // #919191B2 (70% opacity)
-                                // #1F1F1F
+                                Color(0xB2919191),
                               ],
                               stops: [0.3, 1.0],
                             ),
                           ),
-                          padding: EdgeInsets.all(1.5), // Border thickness
+                          padding: const EdgeInsets.all(1.5),
                           child: TextField(
-                            controller: nameController,
+                            controller: _channelNameController,
                             style: const TextStyle(color: Color(0xFFE8E7EA)),
                             decoration: InputDecoration(
                               hintText: 'Channel Name',
@@ -578,7 +792,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                                 fontSize: 14,
                               ),
                               filled: true,
-                              fillColor: Color(0xff1B1C1D), // Match background
+                              fillColor: const Color(0xff1B1C1D),
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(10.5),
                                 borderSide: BorderSide.none,
@@ -606,59 +820,90 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
 
                   // Description field
                   Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        gradient: LinearGradient(
-                          colors: [
-                            Color(0xFF1F1F1F),
-                            Color(0xB2919191), // #919191B2 (70% opacity)
-                            // #1F1F1F
-                          ],
-                          stops: [0.3, 1.0],
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      gradient: const LinearGradient(
+                        colors: [
+                          Color(0xFF1F1F1F),
+                          Color(0xB2919191),
+                        ],
+                        stops: [0.3, 1.0],
+                      ),
+                    ),
+                    padding: const EdgeInsets.all(1.5),
+                    child: TextField(
+                      controller: _channelDescriptionController,
+                      style: const TextStyle(color: Color(0xFFE8E7EA)),
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        hintText: 'Description',
+                        hintStyle: TextStyle(
+                          color: Colors.grey.shade400,
+                          fontSize: 14,
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xff1B1C1D),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Colors.grey.shade700,
+                            width: 1,
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Colors.grey.shade700,
+                            width: 1,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Colors.grey.shade600,
+                            width: 1,
+                          ),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 16,
                         ),
                       ),
-                      padding: EdgeInsets.all(1.5), // Border thickness
-                      child: TextField(
-                        controller: descriptionController,
-                        style: const TextStyle(color: Color(0xFFE8E7EA)),
-                        maxLines: 4,
-                        decoration: InputDecoration(
-                          hintText: 'Description',
-                          hintStyle: TextStyle(
-                            color: Colors.grey.shade400,
-                            fontSize: 14,
-                          ),
-                          filled: true,
-                          fillColor: Color(0xff1B1C1D),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(
-                              color: Colors.grey.shade700,
-                              width: 1,
-                            ),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(
-                              color: Colors.grey.shade700,
-                              width: 1,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(
-                              color: Colors.grey.shade600,
-                              width: 1,
-                            ),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 16,
-                          ),
-                        ),
-                      )),
+                    ),
+                  ),
 
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 16),
+
+                  // Next button directly below description
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _isCreatingChannel
+                          ? null
+                          : () => _handleCreateChannelPressed(
+                                name: _channelNameController.text,
+                                description: _channelDescriptionController.text,
+                              ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFC8DEFC),
+                        foregroundColor: const Color(0xFF0F131B),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: Text(
+                        _isCreatingChannel ? 'Next…' : 'Next',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
 
                   Text(
                     'You can provide an optional description for your channel',
@@ -672,12 +917,10 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                 ],
               ),
             ),
-          )
+          ),
         ],
       ),
     );
-
-    
   }
 
   void _showChannelTypeSettings(GroupCreationResponse channelInfo) {
@@ -1538,28 +1781,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   }
 }
 
-// Helper functions and IconData methods
-IconData _getCallIcon(CallType type) {
-  switch (type) {
-    case CallType.incoming:
-      return Icons.call_received;
-    case CallType.outgoing:
-      return Icons.call_made;
-    case CallType.missed:
-      return Icons.call_received;
-  }
-}
-
-Color _getCallColor(CallType type) {
-  switch (type) {
-    case CallType.incoming:
-      return const Color(0xFF2ECC71);
-    case CallType.outgoing:
-      return Colors.grey;
-    case CallType.missed:
-      return const Color(0xFFE74C3C);
-  }
-}
+// Helper functions removed (unused)
 
 // Model classes
 class Channel {
@@ -1567,12 +1789,14 @@ class Channel {
   final String description;
   final String image;
   final bool hasNotification;
+  final models.Chat? chat; // original chat for avatar resolution
 
   Channel({
     required this.name,
     required this.description,
     required this.image,
     this.hasNotification = false,
+    this.chat,
   });
 }
 

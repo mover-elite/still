@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/app/services/chat_service.dart';
 import 'package:flutter_app/resources/pages/video_call_page.dart';
 import 'package:flutter_app/resources/pages/voice_call_page.dart';
 import 'package:nylo_framework/nylo_framework.dart';
@@ -11,7 +12,11 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:dio/dio.dart';
+import 'dart:io';
+import '/app/models/participants.dart';
 import '../../app/utils.dart';
+import 'package:image_picker/image_picker.dart';
 
 class ProfileDetailsPage extends NyStatefulWidget {
   static RouteView path = ("/profile-details", (_) => ProfileDetailsPage());
@@ -26,8 +31,24 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
   bool _showCollapsedHeader = false;
   String _userName = '';
   String? _userImage;
-  String defaultImage = 'image2.png';
+  String? _description;
+  // Default placeholder image for avatars when none is set
+  final String defaultImage = 'image2.png';
   int? _chatId;
+  bool _isGroup = false; // CHANNEL chats
+
+  // Members (CHANNEL only)
+  bool _isLoadingMembers = false;
+  bool _membersError = false;
+  bool _membersFetchAttempted = false;
+  List<Participant> _members = [];
+
+  // Permissions/avatar editing
+  int? _creatorId;
+  // int? _currentUserId; // currently unused
+  bool _canEditAvatar = false;
+  String? _tempGroupImagePath; // local preview before upload
+  bool _isUploadingGroupImage = false;
 
   // Remote media state
   bool _isLoadingMedia = false;
@@ -75,14 +96,108 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
     
     setState(() {
       _userName = navigationData?['userName'] ?? 'User Name';
+      _description = navigationData?['description'] ?? '';
       _userImage = navigationData?['userImage'];
       _chatId = navigationData?['chatId'];
+      _isGroup = navigationData?['isGroup'] == true;
     });
 
     if (_chatId != null) {
       _fetchChatMedia();
       _fetchChatFiles();
+      if (_isGroup) {
+        _fetchMembers();
+      }
     }
+  }
+
+  Future<void> _fetchMembers() async {
+    if (!_isGroup || _chatId == null) return;
+    if (_membersFetchAttempted) return;
+    _membersFetchAttempted = true;
+    setState(() {
+      _isLoadingMembers = true;
+      _membersError = false;
+    });
+    try {
+      final chat = await ChatApiService().getChatDetails(chatId: _chatId!);
+      if (chat != null) {
+        final userData = await Auth.data();
+        final uid = userData != null ? userData['id'] as int : null;
+        bool isAdmin = false;
+        if (uid != null) {
+          isAdmin = chat.participants.any((p) => p.id == uid && p.chatMember.isAdmin);
+        }
+        setState(() {
+          _members = List<Participant>.from(chat.participants);
+          _creatorId = chat.creatorId;
+          // _currentUserId = uid;
+          _canEditAvatar = uid != null && (_creatorId == uid || isAdmin);
+          // If no explicit image for group, prefer chat avatar when present
+          if ((_userImage == null || _userImage!.isEmpty) && chat.avatar != null) {
+            _userImage = chat.avatar;
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching members: $e');
+      _membersError = true;
+      _membersFetchAttempted = false; // allow retry
+    } finally {
+      if (mounted) setState(() { _isLoadingMembers = false; });
+    }
+  }
+
+  Future<void> _onChangeGroupAvatar() async {
+    if (!_canEditAvatar) return;
+    try {
+      final picker = ImagePicker();
+      final XFile? picked = await picker.pickImage(source: ImageSource.gallery);
+      if (picked == null) return;
+      setState(() {
+        _tempGroupImagePath = picked.path; // immediate preview
+        _isUploadingGroupImage = true;
+      });
+
+      await ChatService().updateChatAvatarImage(_chatId!, picked.path);
+
+      showToast(title: "Channel avatar", description: "Upload successful.");
+
+    } catch (e) {
+      debugPrint('Error picking group image: $e');
+    } finally {
+      if (mounted) setState(() { _isUploadingGroupImage = false; });
+    }
+  }
+
+  void _openAvatarFullScreen() {
+    final Widget imageWidget = _tempGroupImagePath != null
+        ? Image.file(File(_tempGroupImagePath!), fit: BoxFit.contain)
+        : (_userImage != null && _userImage != defaultImage)
+            ? Image.network('$_userImage', fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white70, size: 60))
+            : Image.asset(defaultImage, fit: BoxFit.contain).localAsset();
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withOpacity(0.9),
+      builder: (_) => GestureDetector(
+        onTap: () => Navigator.of(context).pop(),
+        child: Stack(
+          children: [
+            Center(child: imageWidget),
+            Positioned(
+              top: 40,
+              right: 20,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _fetchChatLinks() async {
@@ -215,15 +330,8 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
 
                     // Action Buttons
                     _buildActionButtons(),
-
-                    // About Section (always visible)
-                    _buildAboutSection(),
-
-                    // Media Tabs
-                    _buildMediaTabs(),
-
-                    // Content based on selected tab
-                    _buildTabContent(),
+                    // Main sections: About (left) and Tabs/Content (right) on wide screens
+                    _buildMainSections(),
                   ],
                 ),
               ),
@@ -232,6 +340,218 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
         ),
       ),
     );
+  }
+
+  // Responsive main sections layout
+  Widget _buildMainSections() {
+    final width = MediaQuery.of(context).size.width;
+    final isWide = width >= 700; // threshold for two-column layout
+
+    if (!isWide) {
+      // Single-column (mobile): keep About above tabs/content
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // About Section (always visible)
+          _buildAboutSection(),
+          // Media Tabs
+          _buildMediaTabs(),
+          // Content based on selected tab
+          _buildTabContent(),
+        ],
+      );
+    }
+
+    // Two-column: About on the left, tabs/content on the right
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Left column: About
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 320),
+            child: _buildAboutSection(),
+          ),
+          const SizedBox(width: 24),
+          // Right column: Tabs and content
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildMediaTabs(),
+                _buildTabContent(),
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMembersSection() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Members',
+                style: TextStyle(
+                  color: Color(0xFFE8E7EA),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (!_isLoadingMembers && !_membersError)
+                Text(
+                  '(${_members.length})',
+                  style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                ),
+              const Spacer(),
+              if (_membersError)
+                TextButton(
+                  onPressed: _fetchMembers,
+                  child: const Text('Retry'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_isLoadingMembers)
+            _buildMembersSkeleton()
+          else if (_membersError)
+            const Text(
+              'Failed to load members',
+              style: TextStyle(color: Colors.redAccent, fontSize: 14),
+            )
+          else if (_members.isEmpty)
+            const Text(
+              'No members yet',
+              style: TextStyle(color: Color(0xFFE8E7EA), fontSize: 14),
+            )
+          else
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 4,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 0.78,
+              ),
+              itemCount: _members.length.clamp(0, 12), // show up to 12 initially
+              itemBuilder: (context, index) {
+                final m = _members[index];
+                return _buildMemberTile(m);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMembersSkeleton() {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        childAspectRatio: 0.78,
+      ),
+      itemCount: 8,
+      itemBuilder: (context, index) => Column(
+        children: [
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: const Color(0xFF1C212C),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            width: 70,
+            height: 10,
+            decoration: BoxDecoration(
+              color: const Color(0xFF1C212C),
+              borderRadius: BorderRadius.circular(4),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMemberTile(Participant m) {
+  final displayName = ((m.firstName ?? '').isNotEmpty || (m.lastName ?? '').isNotEmpty)
+    ? [m.firstName ?? '', m.lastName ?? ''].where((e) => e.isNotEmpty).join(' ').trim()
+        : m.username;
+    final initials = _initialsFrom(displayName);
+    return Column(
+      children: [
+        Stack(
+          children: [
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade700,
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: Text(
+                  initials,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            if (m.chatMember.isAdmin)
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3498DB),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFF0F131B), width: 2),
+                  ),
+                  child: const Icon(Icons.shield, color: Colors.white, size: 12),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          displayName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Color(0xFFE8E7EA),
+            fontSize: 12,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
+  String _initialsFrom(String name) {
+    final parts = name.trim().split(RegExp(r"\s+"));
+    if (parts.isEmpty) return '?';
+    String first = parts.first.isNotEmpty ? parts.first[0] : '';
+    String last = parts.length > 1 && parts.last.isNotEmpty ? parts.last[0] : '';
+    return (first + last).toUpperCase();
   }
 
   Widget _buildCollapsedHeader() {
@@ -294,6 +614,8 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
       case 2:
         final linkCount = _extractedLinksCache.values.fold(0, (sum, links) => sum + links.length);
         return '$linkCount links';
+      case 3:
+        return '${_members.length} members';
       default:
         return '';
     }
@@ -304,28 +626,65 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
         children: [
-          // Profile Image
-          Container(
-            width: 80,
-            height: 80,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
+          // Profile Image (tap to expand; edit via pencil button only for creator/admin)
+          GestureDetector(
+            onTap: _openAvatarFullScreen,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                  ),
+                  child: ClipOval(
+                    child: _tempGroupImagePath != null
+                        ? Image.file(
+                            File(_tempGroupImagePath!),
+                            fit: BoxFit.cover,
+                            width: 80,
+                            height: 80,
+                          )
+                        : (_userImage != null)
+                            ? Image.network(
+                                '$_userImage',
+                                fit: BoxFit.cover,
+                                width: 80,
+                                height: 80,
+                              )
+                            : Icon(
+                                _isGroup ? Icons.group : Icons.person,
+                                    color: Colors.grey.shade500,
+                                    size: 30,
+                                  ),
+                  ),
+                ),
+                if (_isGroup && _canEditAvatar)
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: GestureDetector(
+                      onTap: _onChangeGroupAvatar,
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.6),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white24, width: 1),
+                        ),
+                        child: _isUploadingGroupImage
+                            ? const Padding(
+                                padding: EdgeInsets.all(4.0),
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white70),
+                              )
+                            : const Icon(Icons.edit, size: 14, color: Colors.white),
+                      ),
+                    ),
+                  ),
+              ],
             ),
-            child: ClipOval(
-              child: (_userImage != null && _userImage != defaultImage)
-                  ? Image.network(
-                      '$_userImage',
-                      fit: BoxFit.cover,
-                      width: 80,
-                      height: 80,
-                    )
-                  : Image.asset(
-                    defaultImage,
-                    fit: BoxFit.cover,
-                    width: 80,
-                    height: 80,
-                  ).localAsset(),
-              ),
           ),
 
           const SizedBox(height: 16),
@@ -345,9 +704,9 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
 
           const SizedBox(height: 4),
 
-          // Last Seen
+          // Presence or members count
           Text(
-            'Last seen 3 hours ago',
+            _isGroup ? '${_members.length} members' : 'Last seen 3 hours ago',
             style: TextStyle(
               color: Colors.grey.shade400,
               fontSize: 14,
@@ -449,7 +808,7 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
           const SizedBox(height: 12),
 
           Text(
-            "I'm a software engineer passionate about building secure and private communication tools.",
+            _description ?? "",
             style: TextStyle(
               color: Colors.grey.shade300,
               fontSize: 14,
@@ -519,6 +878,7 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
           _buildTab('Media', 0),
           _buildTab('Files', 1),
           _buildTab('Links', 2),
+          if (_isGroup) _buildTab('Members', 3),
         ],
       ),
     );
@@ -535,6 +895,8 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
             _fetchChatFiles();
           } else if (index == 2) { // Links tab
             _fetchChatLinks();
+          } else if (index == 3) { // Members tab
+            _fetchMembers();
           }
         });
       },
@@ -576,6 +938,8 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
         return _buildFilesContent();
       case 2:
         return _buildLinksContent();
+      case 3:
+        return _buildMembersSection();
       default:
         return Container();
     }

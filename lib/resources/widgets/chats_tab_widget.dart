@@ -1253,6 +1253,7 @@ class _ChatsTabState extends NyState<ChatsTab> {
             routeTo(ChatScreenPage.path, data: {
               'chatId': chat.id,
               'userName': name,
+              "description": chat.description,
               'userImage': imagePath,
               'isOnline': isOnline,
               'isVerified': isVerified,
@@ -1280,6 +1281,7 @@ class _ChatsTabState extends NyState<ChatsTab> {
                           'userImage': imagePath,
                           'isOnline': isOnline,
                           'isVerified': isVerified,
+                          'description': chat.description,
                         });
                       },
                       child: Container(
