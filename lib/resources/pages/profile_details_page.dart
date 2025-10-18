@@ -72,8 +72,7 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
 
   void _loadUserData() {
     final navigationData = data();
-    print(navigationData['partner'].toJson());
-    print(navigationData);
+    
     setState(() {
       _userName = navigationData?['userName'] ?? 'User Name';
       _userImage = navigationData?['userImage'];

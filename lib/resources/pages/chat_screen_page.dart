@@ -18,6 +18,7 @@ import '/app/networking/chat_api_service.dart';
 import '/app/networking/websocket_service.dart';
 import '/resources/pages/video_call_page.dart';
 import '/resources/pages/voice_call_page.dart';
+import '/resources/pages/profile_details_page.dart';
 import 'package:file_picker/file_picker.dart';
 import "../../app/utils/chat.dart";
 import "../../app/utils.dart";
@@ -1232,7 +1233,17 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                           onPressed: () => Navigator.pop(context),
                           // onPressed: () => routeToAuthenticatedRoute(),
                         ),
-                        Container(
+                        GestureDetector(
+                          onTap: () => routeTo(ProfileDetailsPage.path, data: {
+                            'partner': _chat?.partner,
+                            'isGroup': _chat?.type == 'CHANNEL',
+                            'chatId': _chat?.id,
+                            'userId': _chat?.partner?.id,
+                            'userName': _userName,
+                            'userImage': _userImage,
+                            'isOnline': _isOnline,
+                          }),
+                          child: Container(
                           width: 32,
                           height: 32,
                           decoration: BoxDecoration(
@@ -1251,10 +1262,21 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                                     size: 20,
                                   ),
                           ),
+                          ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: Column(
+                          child: GestureDetector(
+                            onTap: () => routeTo(ProfileDetailsPage.path, data: {
+                              'partner': _chat?.partner,
+                              'isGroup': _chat?.type == 'CHANNEL',
+                              'chatId': _chat?.id,
+                              'userId': _chat?.partner?.id,
+                              'userName': _userName,
+                              'userImage': _userImage,
+                              'isOnline': _isOnline,
+                            }),
+                            child: Column(
                             crossAxisAlignment: CrossAxisAlignment
                                 .center, // This centers the column content
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -1302,6 +1324,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                                 ],
                               ),
                             ],
+                            ),
                           ),
                         ),
                         Row(
