@@ -177,21 +177,18 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
     print("Received notification: $notificationData");
     final action = notificationData['action'];
     final notificationChatId = notificationData['chatId'];
+    final notificationType = notificationData['type'];
     
-    // Only process if it's for THIS call
-    if (action == 'call:declined' && 
+    // Only process if it's for THIS call and matches the call type
+    if ((action == 'call:declined' || action == 'call:ended') && 
         _callType == CallType.single && 
-        notificationChatId == _chatId) {
-      print("📞 Processing call declined notification for chat $_chatId");
+        notificationChatId == _chatId &&
+        notificationType == 'audio') {
+      print("📞 Processing call $action notification for chat $_chatId");
       
-      // Set flag immediately to prevent duplicate processing
-      _isEndingCall = true;
-      
-      // Cancel subscription immediately to prevent duplicate processing
-      await _notificationSubscription?.cancel();
-      _notificationSubscription = null;
-      
-      await _endCall();
+      // Don't send decline notification since we received one
+      // _endCall will set _isEndingCall flag and cancel subscription
+      await _endCall(sendDeclineNotification: false);
     }
   }
 
@@ -641,7 +638,9 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   }
 
   /// ✅ End the call and navigate back
-  Future<void> _endCall() async {
+  /// [sendDeclineNotification] - if true, sends decline notification to other party
+  /// Set to false when ending due to receiving a decline notification
+  Future<void> _endCall({bool sendDeclineNotification = true}) async {
     // Guard: Prevent duplicate end call processing
     if (_isEndingCall) {
       print("⚠️ _endCall already in progress, skipping duplicate call");
@@ -671,8 +670,12 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       _showCallSummary();
 
       // Send decline notification only if this user initiated the end
-      if (_chatId != null) {
+      // Don't send if we're ending because we received a decline notification
+      if (_chatId != null && sendDeclineNotification) {
+        print("📞 Sending decline notification to other party");
         WebSocketService().sendDeclineCall(_chatId!, "audio");
+      } else if (!sendDeclineNotification) {
+        print("📞 Not sending decline notification (received from other party)");
       }
       
       // Safely pop the navigator
