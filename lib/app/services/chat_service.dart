@@ -313,23 +313,64 @@ class ChatService {
   }
 
   /// Handle WebSocket messages
-  void _handleWebSocketMessage(Map<String, dynamic> messageData) {
+  void _handleWebSocketMessage(Map<String, dynamic> messageData) async {
     try {
       final message = Message.fromJson(messageData);
+      
+      print('📨 ChatService received message - ID: ${message.id}, chatId: ${message.chatId}, referenceId: ${message.referenceId}');
 
       // Initialize caches
       _chatMessages.putIfAbsent(message.chatId, () => []);
       _seenMessageIds.putIfAbsent(message.chatId, () => <int>{});
 
+      print('📨 Current seenMessageIds for chat ${message.chatId}: ${_seenMessageIds[message.chatId]}');
+      print('📨 Current message count in cache: ${_chatMessages[message.chatId]!.length}');
+
       // De-duplication: if we've already seen this message ID, ignore entirely
       if (_seenMessageIds[message.chatId]!.contains(message.id) ||
           _chatMessages[message.chatId]!.any((m) => m.id == message.id)) {
+        print('📨❌ Duplicate message ignored (already seen ID): ${message.id}');
         return;
+      }
+
+      // Get current user ID to check if message is from current user
+      final userData = await Auth.data();
+      final int currentUserId = userData['id'];
+      final bool isMessageFromCurrentUser = (message.sender.id == currentUserId);
+
+      // Check if this chat has an active screen that will handle the message
+      if (_activeChatScreens.contains(message.chatId)) {
+        // Update last message but do not increment unread
+        updateChatListWithMessage(message.chatId, message, incrementUnread: false);
+        print('📨 Chat list updated for chat ${message.chatId} - message handled by active chat screen');
+        return;
+      }
+
+      // Check if this is an update to a pending message (by referenceId)
+      if (message.referenceId != null) {
+        final index = _chatMessages[message.chatId]!
+            .indexWhere((m) => m.referenceId == message.referenceId);
+        if (index != -1) {
+          print('📨 Updating pending message with referenceId: ${message.referenceId} -> new ID: ${message.id}');
+          // Remove old message ID from seen set if it exists
+          final oldMessageId = _chatMessages[message.chatId]![index].id;
+          _seenMessageIds[message.chatId]!.remove(oldMessageId);
+          
+          // Replace the pending message with the confirmed one
+          _chatMessages[message.chatId]![index] = message;
+          _seenMessageIds[message.chatId]!.add(message.id);
+          
+          // Update chat list without incrementing unread (message already exists)
+          updateChatListWithMessage(message.chatId, message, incrementUnread: false);
+          print('📨 Replaced pending message for chat ${message.chatId}');
+          return;
+        }
       }
 
       // If app is backgrounded and chat is not active, show a local notification
       final shouldNotify = !NotificationService.instance.isAppInForeground &&
-          !_activeChatScreens.contains(message.chatId);
+          !_activeChatScreens.contains(message.chatId) &&
+          !isMessageFromCurrentUser; // Don't notify for own messages
       if (shouldNotify) {
         final chat = _chats[message.chatId];
         final title = chat?.name ?? 'New message';
@@ -345,22 +386,19 @@ class ChatService {
         );
       }
 
-      // Check if this chat has an active screen that will handle the message
-      if (_activeChatScreens.contains(message.chatId)) {
-        // Update last message but do not increment unread
-        updateChatListWithMessage(message.chatId, message, incrementUnread: false);
-        print('📨 Chat list updated for chat ${message.chatId} - message handled by active chat screen');
-        return;
-      }
-
       // Add to local message cache only for chats without active screens
       _chatMessages[message.chatId]!.add(message);
       _seenMessageIds[message.chatId]!.add(message.id);
+      
+      print('📨✅ ADDED NEW message to cache - ID: ${message.id}, referenceId: ${message.referenceId}');
+      print('📨 New message count in cache: ${_chatMessages[message.chatId]!.length}');
+      print('📨 Updated seenMessageIds: ${_seenMessageIds[message.chatId]}');
 
-      // Update chat list and increment unread normally
-      updateChatListWithMessage(message.chatId, message, incrementUnread: true);
+      // Update chat list and increment unread only if message is NOT from current user
+      final shouldIncrementUnread = !isMessageFromCurrentUser;
+      updateChatListWithMessage(message.chatId, message, incrementUnread: shouldIncrementUnread);
 
-      print('📨 Received message for chat ${message.chatId}');
+      print('📨 Received NEW message for chat ${message.chatId} (from current user: $isMessageFromCurrentUser, incrementUnread: $shouldIncrementUnread)');
     } catch (e) {
       print('❌ Error handling WebSocket message: $e');
     }

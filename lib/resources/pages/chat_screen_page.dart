@@ -486,14 +486,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
             audioDuration: old.audioDuration,
             );
 
-            // Keep chat list in sync without incrementing unread count
-            if (_chat != null) {
-            ChatService().updateChatListWithMessage(
-              _chat!.id,
-              _messages[index],
-              incrementUnread: false,
-            );
-            }
+            // ChatService already handles the chat list update
           }
 
         
@@ -508,9 +501,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
           if (index != -1) {
             print("Found reference message, updating: ${newMessage.referenceId}");
             _messages[index] = newMessage;
-            // Update chat list when replacing a pending message (do not increment unread)
-            ChatService()
-                .updateChatListWithMessage(_chat!.id, newMessage, incrementUnread: false);
+            // ChatService already handles the chat list update
             return;
           }
         }
@@ -518,23 +509,25 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         // De-duplicate: if message with same id already exists, do nothing further
         final alreadyExists = _messages.any((m) => m.id == newMessage.id);
         if (alreadyExists) {
-          print("Duplicate message ignored: ${newMessage.id}");
-          // Still ensure last message is updated without unread bump
-          if (_chat != null) {
-            ChatService()
-                .updateChatListWithMessage(_chat!.id, newMessage, incrementUnread: false);
-          }
+          print("Duplicate message ignored (same ID): ${newMessage.id}");
+          // ChatService already handles the chat list update
           return;
+        }
+        
+        // Also check if we already have a message with the same referenceId (shouldn't add if we do)
+        if (newMessage.referenceId != null) {
+          final hasReferenceId = _messages.any((m) => m.referenceId == newMessage.referenceId);
+          if (hasReferenceId) {
+            print("Duplicate message ignored (same referenceId): ${newMessage.referenceId}");
+            return;
+          }
         }
 
         print("Adding new message: ${newMessage.id}");
         _messages.add(newMessage);
 
-        // Update chat list with the new message (do not increment unread while chat is active)
-        if (_chat != null) {
-          ChatService()
-              .updateChatListWithMessage(_chat!.id, newMessage, incrementUnread: false);
-        }
+        // ChatService will handle updating the chat list when active screen is registered
+        // No need to call updateChatListWithMessage here - it causes duplication
 
         if (newMessage.senderId != _currentUserId) {
           WebSocketService().sendReadReceipt(newMessage.id, _chat!.id);
@@ -844,7 +837,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
       setState(() {
         final now = DateTime.now();
         final newMessage = Message(
-          id: DateTime.now().millisecondsSinceEpoch, // Temporary ID
+          id:  referenceId, // Temporary ID
           senderId: _currentUserId ?? 0,
           chatId: _chat?.id ?? 0,
           type: type,
@@ -876,7 +869,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         
         // Update chat list with the pending message
         if (_chat != null) {
-          ChatService().updateChatListWithMessage(_chat!.id, newMessage);
+          ChatService().updateChatListWithMessage(_chat!.id, newMessage, incrementUnread: false);
         }
         
         print('✅ Message added to list. Total messages: ${_messages.length}');
