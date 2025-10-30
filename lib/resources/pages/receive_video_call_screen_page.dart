@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/app/networking/websocket_service.dart';
+import 'package:flutter_app/app/services/chat_service.dart';
 import 'package:nylo_framework/nylo_framework.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 
 class ReceiveVideoCallScreenPage extends NyStatefulWidget {
   static RouteView path =
@@ -29,7 +31,8 @@ class _ReceiveVideoCallScreenPageState
   late Animation<double> _bounceAnimation;
   late Animation<double> _glowAnimation;
   late Animation<double> _scaleAnimation;
-  AudioPlayer? _audioPlayer;
+  bool _isRingtonePlaying = false;
+  StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
 
   @override
   get init => () {
@@ -149,6 +152,14 @@ class _ReceiveVideoCallScreenPageState
         _glowController.repeat(reverse: true);
         _scaleController.forward();
         _playRingtone();
+        
+        // Listen for call ended/declined notifications
+        _notificationSubscription = WebSocketService().notificationStream.listen((notification) {
+          final action = notification['action'];
+          if (action == 'call:declined' || action == 'call:ended') {
+            _handleCallEndedNotification(notification);
+          }
+        });
       };
 
   @override
@@ -161,18 +172,100 @@ class _ReceiveVideoCallScreenPageState
     _bounceController.dispose();
     _glowController.dispose();
     _scaleController.dispose();
+    
+    // Cancel notification subscription
+    _notificationSubscription?.cancel();
+    
+    // Stop ringtone if playing
+    if (_isRingtonePlaying) {
+      FlutterRingtonePlayer().stop();
+      _isRingtonePlaying = false;
+    }
+    
+    // Clear call tracking when screen is disposed (safety net)
+    try {
+      final navigationData = data();
+      if (navigationData != null) {
+        final chatId = navigationData['chatId'];
+        final callerId = navigationData['callerId'];
+        ChatService().clearIncomingCall(chatId, callerId, 'video');
+      }
+    } catch (e) {
+      print('Could not clear call tracking in dispose: $e');
+    }
+    
     super.dispose();
-    _audioPlayer?.dispose();
   }
 
   void handleDeclineCall() {
-    final chatID = data()['chatId'];
-    WebSocketService().sendDeclineCall(chatID);
+    // Stop ringtone
+    if (_isRingtonePlaying) {
+      FlutterRingtonePlayer().stop();
+      _isRingtonePlaying = false;
+    }
+    
+    final navigationData = data();
+    final chatID = navigationData['chatId'];
+    final callerId = navigationData['callerId'];
+    
+    // Clear call tracking when declining
+    ChatService().clearIncomingCall(chatID, callerId, 'video');
+    
+    WebSocketService().sendDeclineCall(chatID, "video");
     Navigator.pop(context);
   }
 
+  void _handleCallEndedNotification(Map<String, dynamic> notification) {
+    try {
+      final notificationChatId = notification['chatId'];
+      final notificationType = notification['type'] ?? 'video';
+      
+      // Get current call data
+      final navigationData = data();
+      if (navigationData == null) return;
+      
+      final currentChatId = navigationData['chatId'];
+      final isGroup = navigationData['isGroup'] ?? false;
+      
+      // Only handle if it's for this call and it's a single (non-group) call
+      if (notificationChatId == currentChatId && 
+          notificationType == 'video' && 
+          !isGroup) {
+        print('📞 Call ended/declined notification received for single video call - closing screen');
+        
+        // Stop ringtone
+        if (_isRingtonePlaying) {
+          FlutterRingtonePlayer().stop();
+          _isRingtonePlaying = false;
+        }
+        
+        // Clear call tracking
+        final callerId = navigationData['callerId'];
+        ChatService().clearIncomingCall(currentChatId, callerId, 'video');
+        
+        // Close the screen
+        if (mounted && Navigator.canPop(context)) {
+          Navigator.pop(context);
+        }
+      }
+    } catch (e) {
+      print('❌ Error handling call ended notification: $e');
+    }
+  }
+
   void handleAcceptCall() async {
+    // Stop ringtone
+    if (_isRingtonePlaying) {
+      FlutterRingtonePlayer().stop();
+      _isRingtonePlaying = false;
+    }
+    
     final navigationData = data();
+    
+    // Clear call tracking when accepting
+    final chatId = navigationData['chatId'];
+    final callerId = navigationData['callerId'];
+    ChatService().clearIncomingCall(chatId, callerId, 'video');
 
     // Navigate to video call page with proper data
     Navigator.pop(context); // Close the incoming call screen first
@@ -182,12 +275,20 @@ class _ReceiveVideoCallScreenPageState
     );
   }
 
-    Future<void> _playRingtone() async {
-    _audioPlayer?.stop();
-    _audioPlayer = AudioPlayer();
-    await _audioPlayer!.setReleaseMode(ReleaseMode.loop);
-    await _audioPlayer!.play(AssetSource('audio/iphone_ringing_tone.mp3'));
-    
+  Future<void> _playRingtone() async {
+    try {
+      await FlutterRingtonePlayer().play(
+        android: AndroidSounds.ringtone,
+        ios: IosSounds.glass,
+        looping: true,
+        volume: 1.0,
+        asAlarm: false,
+      );
+      _isRingtonePlaying = true;
+      print('🔔 Ringtone started with looping enabled');
+    } catch (e) {
+      print('❌ Error playing ringtone: $e');
+    }
   }
 
   Widget _buildAnimatedDots() {

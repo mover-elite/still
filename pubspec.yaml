@@ -44,6 +44,7 @@ dependencies:
   livekit_client: ^2.5.1
   camera: ^0.11.2
   audioplayers: ^5.2.1
+  flutter_ringtone_player: ^4.0.0+3
   saver_gallery: ^4.0.0
   dio: ^5.4.3
   video_player: ^2.10.0

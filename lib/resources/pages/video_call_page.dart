@@ -497,13 +497,20 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
       // Example: Show call summary before leaving
       // _showCallSummary();
 
-      if (mounted) {
+      // Safely pop the navigator
+      if (mounted && Navigator.canPop(context)) {
         Navigator.of(context).pop();
       }
+      WebSocketService().sendDeclineCall(_chatId!, "audio");
     } catch (e) {
       print("Error ending call: $e");
-      if (mounted) {
-        Navigator.of(context).pop();
+      // Try to pop even on error, but check if possible
+      if (mounted && Navigator.canPop(context)) {
+        try {
+          Navigator.of(context).pop();
+        } catch (navError) {
+          print("Could not pop navigator: $navError");
+        }
       }
     }
   }

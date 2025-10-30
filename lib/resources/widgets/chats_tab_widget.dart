@@ -72,16 +72,21 @@ class _ChatsTabState extends NyState<ChatsTab> {
     final userData = await Auth.data();
     _currentUserId = userData?['id'];
 
-    await ChatService().initialize();
-    _loadRecentChats();
+    // Set up stream listener BEFORE initializing to catch the initial emission
     _chatListSubscription?.cancel();
     _chatListSubscription = ChatService().chatListStream.listen((chats) {
       if (mounted) {
         setState(() {
           chatList = chats;
         });
+        print('📱 Chats tab received ${chats.length} chats from stream');
       }
     });
+
+    await ChatService().initialize();
+    
+    // Also load directly to ensure we have data even if stream timing is off
+    _loadRecentChats();
   }
 
   Future<void> _initializeWebSocket() async {
@@ -590,14 +595,15 @@ class _ChatsTabState extends NyState<ChatsTab> {
   Future<void> _loadRecentChats() async {
     try {
       final List<Chat> chats = await ChatService().loadChatList();
+      print('📱 Chats tab _loadRecentChats loaded ${chats.length} chats');
       if (mounted) {
         setState(() {
           chatList = chats;
         });
+        print('📱 Chats tab setState completed with ${chatList.length} chats');
       }
-      // Check if user is authenticated
     } catch (e) {
-      print('Error loading recent chats: $e');
+      print('❌ Error loading recent chats: $e');
     }
   }
 

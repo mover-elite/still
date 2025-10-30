@@ -55,7 +55,13 @@ class ChatService {
   /// Private initialization method called in constructor
   Future<void> initialize() async {
     print("Initializing ChatService...");
-    if (_isInitialized) return;
+    if (_isInitialized) {
+      print('ChatService already initialized, skipping...');
+      return;
+    }
+
+    // Set flag immediately to prevent duplicate initialization
+    _isInitialized = true;
 
     try {
       // Initialize WebSocket connection
@@ -65,19 +71,24 @@ class ChatService {
         _chats[chat.id] = chat;
       }
       print("Gotten chat list with ${_chats.length} chats");
+      
+      // Emit initial chat list to stream so listeners get the data
+      _chatListController.add(_chats.values.toList());
+      
       await WebSocketService().initializeConnection();
 
-      // Listen to WebSocket messages
+      // Listen to WebSocket messages (only once since _isInitialized prevents re-entry)
+      print("Listening to websocket notifications");
       WebSocketService()
           .notificationStream
           .listen(_handleWebSocketNotification);
       WebSocketService().messageStream.listen(_handleWebSocketMessage);
       
-
-      _isInitialized = true;
       print('✅ ChatService initialized automatically');
     } catch (e) {
       print('❌ Error initializing ChatService: $e');
+      // Reset flag on error so initialization can be retried
+      _isInitialized = false;
     }
   }
 
@@ -431,6 +442,11 @@ class ChatService {
         case "join:call":
           _handleJoinCall(notificationData);
           break;
+        
+        case "call:declined":
+        case "call:ended":
+          _handleCallEnded(notificationData);
+          break;
 
         default:
           print('🔔 Unhandled notification: $action');
@@ -455,12 +471,27 @@ class ChatService {
     }
   }
 
+  // Track active incoming calls to prevent duplicates
+  final Set<String> _activeIncomingCalls = {};
+
   /// Handle incoming call notification
   void _handleJoinCall(Map<String, dynamic> data) async {
     try {
+      
+      print("Joining call ☎️: $data");
       final int callerId = data['callerId'];
       final int chatId = data['chatId'];
       final String type = data['type'];
+      
+      // Create a unique key for this call
+      final callKey = '$chatId-$callerId-$type';
+      
+      // Prevent duplicate call notifications
+      if (_activeIncomingCalls.contains(callKey)) {
+        print('📞 Ignoring duplicate call notification: $callKey');
+        return;
+      }
+      
       print('📞 Incoming call from user $callerId in chat $chatId');
       final userData = await Auth.data();
       final int currentUserId = userData['id'];
@@ -470,6 +501,10 @@ class ChatService {
         // Ignore if the caller is the current user
         return;
       }
+      
+      // Mark this call as active
+      _activeIncomingCalls.add(callKey);
+      
       // Get chat details to show caller info
       final chat = await getChatDetails(chatId);
 
@@ -505,9 +540,41 @@ class ChatService {
             },
           );
         }
+        
+        // DON'T remove from active calls here - keep it to prevent duplicates
+        // It will be removed when the call is answered, declined, or times out
+        print('📞 Call screen opened for: $callKey (tracking will be cleared on call end)');
+      } else {
+        // If chat is null, remove from tracking since navigation didn't happen
+        _activeIncomingCalls.remove(callKey);
+        print('📞 Chat not found, cleared tracking: $callKey');
       }
     } catch (e) {
       print('❌ Error handling join call: $e');
+      // Remove from tracking on error since navigation failed
+      final callKey = '${data['chatId']}-${data['callerId']}-${data['type']}';
+      _activeIncomingCalls.remove(callKey);
+    }
+  }
+
+  /// Clear call tracking for a specific chat/caller combination
+  void clearIncomingCall(int chatId, int callerId, String type) {
+    final callKey = '$chatId-$callerId-$type';
+    _activeIncomingCalls.remove(callKey);
+    print('📞 Cleared incoming call tracking: $callKey');
+  }
+
+  /// Handle call ended/declined notification
+  void _handleCallEnded(Map<String, dynamic> data) {
+    try {
+      final int chatId = data['chatId'];
+      final int callerId = data['callerId'] ?? data['userId'];
+      final String type = data['type'] ?? 'audio'; // Default to audio if not specified
+      print("Data for call ended: $data");
+      clearIncomingCall(chatId, callerId, type);
+      print('📞 Call ended/declined for chat $chatId');
+    } catch (e) {
+      print('❌ Error handling call ended: $e');
     }
   }
 

@@ -361,6 +361,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         }
       }
     } else if (notificationData['action'] == 'typing:start') {
+      // Only show typing indicator for other users in the current chat
       if (notificationData['chatId'] == _chat?.id &&
           notificationData['userId'] != userData?['id']) {
         final newTypingUsers = _typingUsers.toSet();
@@ -370,9 +371,10 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
           _typingUsers = newTypingUsers;
         });
       }
-    } else if (notificationData['action'] == 'typing:stop' &&
-        notificationData['userId'] != userData?['id']) {
-      if (notificationData['chatId'] == _chat?.id) {
+    } else if (notificationData['action'] == 'typing:stop') {
+      // Remove typing indicator for other users in the current chat
+      if (notificationData['chatId'] == _chat?.id &&
+          notificationData['userId'] != userData?['id']) {
         final newTypingUsers = _typingUsers.toSet();
         newTypingUsers.remove(notificationData['userId']);
         setState(() {
@@ -449,7 +451,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
             final old = _messages[index];
 
             final bool isTextType =
-              (old.type ?? '').toString().toUpperCase() == 'TEXT';
+              old.type.toString().toUpperCase() == 'TEXT';
 
             final updatedText = isTextType
               ? (messageData['text'] as String?) ?? old.text
@@ -586,7 +588,14 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
     _audioDurationSubscription?.cancel();
     _audioPositionSubscription?.cancel();
     _audioCompleteSubscription?.cancel();
-    _audioPlayer?.dispose();
+    
+    // Safely dispose audio player
+    try {
+      _audioPlayer?.dispose();
+    } catch (e) {
+      // Player might already be disposed, ignore
+    }
+    
     _previewChewieController?.dispose();
     _previewVideoController?.dispose();
     for (final c in _videoMsgChewie.values) { c.dispose(); }
@@ -598,14 +607,22 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
     try {
       // Stop any currently playing audio
       if (_audioPlayer != null) {
-        await _audioPlayer!.stop();
+        try {
+          await _audioPlayer!.stop();
+        } catch (e) {
+          // Player might already be disposed, ignore
+        }
         
         // Cancel existing subscriptions
         _audioDurationSubscription?.cancel();
         _audioPositionSubscription?.cancel();
         _audioCompleteSubscription?.cancel();
         
-        await _audioPlayer!.dispose();
+        try {
+          await _audioPlayer!.dispose();
+        } catch (e) {
+          // Player might already be disposed, ignore
+        }
       }
       
       _audioPlayer = AudioPlayer();
@@ -672,7 +689,11 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
 
   Future<void> _pauseAudioMessage() async {
     if (_audioPlayer != null) {
-      await _audioPlayer!.pause();
+      try {
+        await _audioPlayer!.pause();
+      } catch (e) {
+        // Player might be disposed, ignore
+      }
       if (mounted) {
         setState(() {
           _isAudioPlaying = false;
@@ -1370,13 +1391,22 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                                 final isChannel = _chat?.type == 'CHANNEL';
                                 if (isChannel) {
                                   final membersCount = _chat?.participants.length ?? 0;
+                                  // Show typing indicator if people are typing, otherwise show member count
+                                  final displayText = _typingUsers.isNotEmpty
+                                      ? (_typingUsers.length == 1
+                                          ? 'Typing...'
+                                          : '${_typingUsers.length} people are typing...')
+                                      : '$membersCount Members';
+                                  
                                   return Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
                                       Text(
-                                        '$membersCount Members',
+                                        displayText,
                                         style: TextStyle(
-                                          color: Colors.grey.shade500,
+                                          color: _typingUsers.isNotEmpty
+                                              ? const Color(0xFF3498DB)
+                                              : Colors.grey.shade500,
                                           fontSize: 8,
                                         ),
                                       ),
@@ -1400,7 +1430,9 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                                     const SizedBox(width: 4),
                                     Text(
                                       _typingUsers.isNotEmpty
-                                          ? 'Typing...'
+                                          ? (_typingUsers.length == 1
+                                              ? 'Typing...'
+                                              : '${_typingUsers.length} people are typing...')
                                           : (_isOnline ? 'Online' : 'Offline'),
                                       style: TextStyle(
                                         color: _typingUsers.isNotEmpty

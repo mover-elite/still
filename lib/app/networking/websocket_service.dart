@@ -244,12 +244,13 @@ class WebSocketService {
     }
   }
 
-  Future<void> sendDeclineCall(int chatID) async {
+  Future<void> sendDeclineCall(int chatID, String type ) async {
     if (!_isConnected || _socket == null) return;
 
     try {
       final declineData = {
         'chatId': chatID,
+        "type": type
       };
 
       _socket!.emit('decline:call', declineData);

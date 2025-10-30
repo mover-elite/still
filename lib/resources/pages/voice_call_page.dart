@@ -136,10 +136,21 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
     await _audioPlayer!.setReleaseMode(ReleaseMode.loop);
     
     if(_isJoining){
-      await _audioPlayer!.play(AssetSource('audio/iphone_ringing_tone.mp3'));
+    //   await _audioPlayer!.play(AssetSource('audio/iphone_ringing_tone.mp3'));
     }else{
       await _audioPlayer!.play(AssetSource('audio/ringing_initiated.mp3'));
     }
+  }
+
+  Future<void> _stopRingtone() async {
+    try{
+      await _audioPlayer?.stop();
+      await _audioPlayer?.dispose();
+      _audioPlayer = null;
+    }catch(e){
+
+    }
+    
   }
 
   Future<void> _handleIncomingNotification(
@@ -178,12 +189,12 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         final bool initiateCall = navigationData['initiateCall'] ?? false;
 
         if (_isJoining) {
-          // For incoming calls, start directly in ringing state
+          // For incoming calls, start directly in requesting state
           setState(() {
-            _callState = CallState.ringing;
+            _callState = CallState.requesting;
 
           });
-          _startRingingAnimations();
+          _startRequestingAnimations();
 
           // Delay joining the existing call
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -306,7 +317,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
     _fadeController.stop();
     _pulseController.reset();
     _fadeController.reset();
-    _audioPlayer?.dispose();
+   
   }
 
   Future<void> _initializeLiveKitRoom(String token, String url) async {
@@ -479,6 +490,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
               _remoteParticipants.addAll(_room!.remoteParticipants.values);
             });
             _stopAllAnimations();
+            _stopRingtone();
             _startTimer();
           }
         } else {
@@ -509,6 +521,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
             _remoteParticipants.add(event.participant);
           });
           _stopAllAnimations();
+          _stopRingtone();
           // Only start timer if not already started
           if (_timer == null) {
             _startTimer();
@@ -611,13 +624,20 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       // Example: Show call summary before leaving
       _showCallSummary();
 
-      if (mounted) {
+      // Safely pop the navigator
+      if (mounted && Navigator.canPop(context)) {
         Navigator.of(context).pop();
       }
+      WebSocketService().sendDeclineCall(_chatId!, "audio");
     } catch (e) {
       print("Error ending call: $e");
-      if (mounted) {
-        Navigator.of(context).pop();
+      // Try to pop even on error, but check if possible
+      if (mounted && Navigator.canPop(context)) {
+        try {
+          Navigator.of(context).pop();
+        } catch (navError) {
+          print("Could not pop navigator: $navError");
+        }
       }
     }
   }
