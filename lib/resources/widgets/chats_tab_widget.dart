@@ -1240,7 +1240,9 @@ class _ChatsTabState extends NyState<ChatsTab> {
 
     print("chat.typingUsers: ${chat.typingUsers}");
     final isVerified = false; // You can add verification logic later
-    final hasUnread = false; // You can add unread logic later
+    final unReadCount = chat.unreadCount ;
+    final hasUnread = unReadCount > 0; // You can add unread logic later
+    
     final isOnline = chat.partner?.status == "online";
     final imagePath = getChatAvatar(
         chat, getEnv("API_BASE_URL")); // Use avatar based on username
@@ -1422,7 +1424,7 @@ class _ChatsTabState extends NyState<ChatsTab> {
                         ),
                         child: Center(
                           child: Text(
-                            '12', // Your text here
+                            unReadCount.toString(), // Your text here
                             style: TextStyle(
                               color: Colors.white,
                               fontSize:
@@ -1663,50 +1665,63 @@ class _ChatsTabState extends NyState<ChatsTab> {
         children: [
           Column(
             children: [
-              // Chat list (silent loading like WhatsApp)
+              // Chat list with pull-to-refresh
               Expanded(
-                child: chatList.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
+                child: RefreshIndicator(
+                  onRefresh: _loadRecentChats,
+                  backgroundColor: Color(0xFF1B1C1D),
+                  color: Color(0xFF3498DB),
+                  child: chatList.isEmpty
+                      ? ListView(
+                          // Wrap in ListView to enable pull-to-refresh on empty state
                           children: [
-                            Icon(
-                              Icons.chat_bubble_outline,
-                              color: Color(0xFF82808F),
-                              size: 48,
-                            ),
-                            SizedBox(height: 16),
-                            Text(
-                              'No chats yet',
-                              style: TextStyle(
-                                color: Color(0xFF82808F),
-                                fontSize: 16,
+                            Container(
+                              height: MediaQuery.of(context).size.height - 200,
+                              child: Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.chat_bubble_outline,
+                                      color: Color(0xFF82808F),
+                                      size: 48,
+                                    ),
+                                    SizedBox(height: 16),
+                                    Text(
+                                      'No chats yet',
+                                      style: TextStyle(
+                                        color: Color(0xFF82808F),
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                    SizedBox(height: 8),
+                                    Text(
+                                      'Start a conversation with your contacts',
+                                      style: TextStyle(
+                                        color: Color(0xFF82808F),
+                                        fontSize: 14,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                            SizedBox(height: 8),
-                            Text(
-                              'Start a conversation with your contacts',
-                              style: TextStyle(
-                                color: Color(0xFF82808F),
-                                fontSize: 14,
-                              ),
-                              textAlign: TextAlign.center,
                             ),
                           ],
-                        ),
-                      )
-                    : ListView.builder(
-                        itemCount: chatList.length,
-                        itemBuilder: (context, index) {
-                          final chat = chatList[index];
-                          final isLastItem = index == chatList.length - 1;
+                        )
+                      : ListView.builder(
+                          itemCount: chatList.length,
+                          itemBuilder: (context, index) {
+                            final chat = chatList[index];
+                            final isLastItem = index == chatList.length - 1;
 
-                          return _buildChatItem(
-                            chat: chat,
-                            isLastItem: isLastItem,
-                          );
-                        },
-                      ),
+                            return _buildChatItem(
+                              chat: chat,
+                              isLastItem: isLastItem,
+                            );
+                          },
+                        ),
+                ),
               ),
             ],
           ),

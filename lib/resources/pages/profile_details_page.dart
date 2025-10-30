@@ -6,13 +6,14 @@ import 'package:nylo_framework/nylo_framework.dart';
 import 'package:flutter_app/app/networking/chat_api_service.dart';
 import 'package:flutter_app/app/models/media_response.dart';
 import 'package:flutter_app/app/models/chat_links_response.dart';
+import 'package:flutter_app/app/models/user.dart';
+import 'package:flutter_app/app/models/search_char_response.dart';
 import 'package:chewie/chewie.dart';
 import 'package:video_player/video_player.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:dio/dio.dart';
 import 'dart:io';
 import '/app/models/participants.dart';
 import '../../app/utils.dart';
@@ -47,6 +48,7 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
   int? _creatorId;
   // int? _currentUserId; // currently unused
   bool _canEditAvatar = false;
+  bool _canAddMembers = false;
   String? _tempGroupImagePath; // local preview before upload
   bool _isUploadingGroupImage = false;
 
@@ -133,6 +135,7 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
           _creatorId = chat.creatorId;
           // _currentUserId = uid;
           _canEditAvatar = uid != null && (_creatorId == uid || isAdmin);
+          _canAddMembers = uid != null && (_creatorId == uid || isAdmin);
           // If no explicit image for group, prefer chat avatar when present
           if ((_userImage == null || _userImage!.isEmpty) && chat.avatar != null) {
             _userImage = chat.avatar;
@@ -293,6 +296,33 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
     }
   }
 
+  Future<void> _showAddMembersSheet() async {
+    if (!_canAddMembers || _chatId == null) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(ctx).viewInsets.bottom,
+        ),
+        child: _AddMembersBottomSheet(
+          chatId: _chatId!,
+          currentMembers: _members,
+          onMembersAdded: () {
+            // Refresh members list after adding
+            _membersFetchAttempted = false;
+            _fetchMembers();
+            // Refresh chat details to update chat_screen_page
+            if (_chatId != null) {
+              ChatService().refreshChatDetails(_chatId!);
+            }
+          },
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     // Dispose video thumbnail controllers
@@ -412,7 +442,17 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
                   style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
                 ),
               const Spacer(),
-              if (_membersError)
+              if (_canAddMembers)
+                TextButton.icon(
+                  onPressed: _showAddMembersSheet,
+                  icon: const Icon(Icons.person_add, size: 18),
+                  label: const Text('Add'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF5B8DEE),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  ),
+                )
+              else if (_membersError)
                 TextButton(
                   onPressed: _fetchMembers,
                   child: const Text('Retry'),
@@ -1760,5 +1800,434 @@ class _VideoPlayerDialogState extends State<_VideoPlayerDialog> {
         ),
       ),
     );
+  }
+}
+
+class _AddMembersBottomSheet extends StatefulWidget {
+  final int chatId;
+  final List<Participant> currentMembers;
+  final VoidCallback onMembersAdded;
+
+  const _AddMembersBottomSheet({
+    required this.chatId,
+    required this.currentMembers,
+    required this.onMembersAdded,
+  });
+
+  @override
+  State<_AddMembersBottomSheet> createState() => _AddMembersBottomSheetState();
+}
+
+class _AddMembersBottomSheetState extends State<_AddMembersBottomSheet> {
+  final TextEditingController _searchController = TextEditingController();
+  List<SearchUser> _searchResults = [];
+  List<User> _chatListUsers = [];
+  List<int> _selectedUserIds = [];
+  bool _isLoading = true;
+  bool _isSearching = false;
+  bool _isAdding = false;
+  String? _error;
+  bool _showChatListFirst = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadChatListUsers();
+    _searchController.addListener(_onSearchChanged);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadChatListUsers() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      // Get chats from ChatService
+      final chatService = ChatService();
+      print("Fetching chats in add members");
+      final chats = chatService.loadChatList();
+      final chatList = await chats;
+      print('Fetched ${chatList.length} chats from ChatService');
+      final currentMemberIds = widget.currentMembers.map((p) => p.id).toSet();
+      final chatUserMap = <int, User>{};
+
+      for (final chat in chatList) {
+        if (chat.type == 'PRIVATE' && chat.partner != null) {
+          final partnerId = chat.partner!.id;
+          if (!currentMemberIds.contains(partnerId)) {
+            // Create a User from Partner
+            final user = User();
+            user.id = partnerId;
+            user.username = chat.partner!.username;
+            chatUserMap[partnerId] = user;
+          }
+        }
+      }
+      print('Loaded chat list users: ${chatUserMap.values.length}');
+      if (mounted) {
+        setState(() {
+          _chatListUsers = chatUserMap.values.toList();
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading chat list users: $e');
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to load chat list';
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _onSearchChanged() async {
+    final query = _searchController.text.trim();
+    
+    if (query.isEmpty) {
+      setState(() {
+        _searchResults = [];
+        _showChatListFirst = true;
+        _isSearching = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _isSearching = true;
+      _showChatListFirst = false;
+      _error = null;
+    });
+
+    try {
+      final results = await ChatApiService().searchChat(query: query);
+      
+      if (mounted) {
+        final currentMemberIds = widget.currentMembers.map((p) => p.id).toSet();
+        final filtered = (results ?? [])
+            .where((u) => !currentMemberIds.contains(u.id))
+            .toList();
+        
+        setState(() {
+          _searchResults = filtered;
+          _isSearching = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error searching users: $e');
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to search users';
+          _isSearching = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _addSelectedMembers() async {
+    print("Add button pressed. Selected users: $_selectedUserIds");
+    if (_selectedUserIds.isEmpty) {
+      print("No users selected");
+      return;
+    }
+    if(_isAdding) {
+      print("Already adding members, ignoring duplicate request");
+      return;
+    }
+    setState(() => _isAdding = true);
+    try {
+      print("Calling addMembersToChat with chatId: ${widget.chatId}, memberIds: $_selectedUserIds");
+      final result = await ChatApiService().addMembersToChat(widget.chatId, _selectedUserIds);
+      print("API Response: $result");
+      
+      if (mounted && result != null) {
+        final addedCount = result['added']?.length ?? 0;
+        Navigator.of(context).pop();
+        widget.onMembersAdded();
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(addedCount > 0 
+                ? '$addedCount ${addedCount == 1 ? 'member' : 'members'} added successfully'
+                : 'No new members were added'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      print("Error caught: $e");
+      debugPrint('Error adding members: $e');
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to add members: $e'; 
+          _isAdding = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildUserTile(dynamic user) {
+    // Handle both User and SearchUser types
+    final userId = user is User ? user.id : (user is SearchUser ? user.id : null);
+    final username = user is User ? (user.username ?? 'Unknown') : (user is SearchUser ? user.username : 'Unknown');
+    final isSelected = userId != null && _selectedUserIds.contains(userId);
+
+    return ListTile(
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade700,
+          shape: BoxShape.circle,
+        ),
+        child: Center(
+          child: Text(
+            _userInitials(username),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+            ),
+          ),
+        ),
+      ),
+      title: Text(
+        username,
+        style: const TextStyle(
+          color: Color(0xFFE8E7EA),
+          fontSize: 14,
+        ),
+      ),
+      subtitle: user is SearchUser && user.firstName != null
+          ? Text(
+              user.firstName!,
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontSize: 12,
+              ),
+            )
+          : null,
+      trailing: Checkbox(
+        value: isSelected,
+        onChanged: (val) {
+          if (userId != null) {
+            print("Checkbox changed for user $userId: $val, current selection: $_selectedUserIds");
+            setState(() {
+              if (val == true) {
+                _selectedUserIds.add(userId);
+              } else {
+                _selectedUserIds.remove(userId);
+              }
+              print("After change: $_selectedUserIds");
+            });
+          }
+        },
+        fillColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return const Color(0xFF5B8DEE);
+          }
+          return Colors.transparent;
+        }),
+      ),
+      onTap: () {
+        if (userId != null) {
+          print("ListTile tapped for user $userId, isSelected: $isSelected, current selection: $_selectedUserIds");
+          setState(() {
+            if (isSelected) {
+              _selectedUserIds.remove(userId);
+            } else {
+              _selectedUserIds.add(userId);
+            }
+            print("After tap: $_selectedUserIds");
+          });
+        }
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    print("Building _AddMembersBottomSheet - selectedUserIds: $_selectedUserIds, isAdding: $_isAdding, isEmpty: ${_selectedUserIds.isEmpty}");
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.75,
+      decoration: const BoxDecoration(
+        color: Color(0xFF0F131B),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(16),
+          topRight: Radius.circular(16),
+        ),
+      ),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: const BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: Color(0xFF1C212C),
+                  width: 1,
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Text(
+                  'Add Members',
+                  style: TextStyle(
+                    color: Color(0xFFE8E7EA),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  decoration: BoxDecoration(
+                    color: (_isAdding || _selectedUserIds.isEmpty)
+                        ? Colors.transparent
+                        : const Color(0xFF5B8DEE).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: (_isAdding || _selectedUserIds.isEmpty)
+                          ? null
+                          : () {
+                              print("InkWell tapped! Calling _addSelectedMembers");
+                              _addSelectedMembers();
+                            },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        child: Text(
+                          'Add (${_selectedUserIds.length})',
+                          style: TextStyle(
+                            color: (_isAdding || _selectedUserIds.isEmpty)
+                                ? Colors.grey
+                                : const Color(0xFF5B8DEE),
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Search field
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: TextField(
+              controller: _searchController,
+              style: const TextStyle(color: Color(0xFFE8E7EA)),
+              decoration: InputDecoration(
+                hintText: 'Search by username or name...',
+                hintStyle: TextStyle(color: Colors.grey.shade600),
+                prefixIcon: const Icon(Icons.search, color: Color(0xFF5B8DEE), size: 20),
+                filled: true,
+                fillColor: const Color(0xFF1C212C),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+            ),
+          ),
+          // Content
+          Expanded(
+            child: _isLoading
+                ? const Center(
+                    child: CircularProgressIndicator(color: Color(0xFF5B8DEE)),
+                  )
+                : _error != null && _showChatListFirst
+                    ? Center(
+                        child: Text(
+                          _error!,
+                          style: const TextStyle(color: Colors.red, fontSize: 14),
+                        ),
+                      )
+                    : _isSearching
+                        ? const Center(
+                            child: CircularProgressIndicator(color: Color(0xFF5B8DEE)),
+                          )
+                        : _showChatListFirst
+                            ? (_chatListUsers.isEmpty
+                                ? const Center(
+                                    child: Text(
+                                      'No contacts yet',
+                                      style: TextStyle(
+                                        color: Color(0xFF7A7A7A),
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  )
+                                : ListView.builder(
+                                    padding: const EdgeInsets.symmetric(vertical: 8),
+                                    itemCount: _chatListUsers.length,
+                                    itemBuilder: (ctx, idx) =>
+                                        _buildUserTile(_chatListUsers[idx]),
+                                  ))
+                            : (_searchResults.isEmpty
+                                ? const Center(
+                                    child: Text(
+                                      'No users found',
+                                      style: TextStyle(
+                                        color: Color(0xFF7A7A7A),
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  )
+                                : ListView.builder(
+                                    padding: const EdgeInsets.symmetric(vertical: 8),
+                                    itemCount: _searchResults.length,
+                                    itemBuilder: (ctx, idx) =>
+                                        _buildUserTile(_searchResults[idx]),
+                                  )),
+          ),
+          if (_isAdding)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: ElevatedButton(
+                  onPressed: null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF5B8DEE),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _userInitials(String username) {
+    if (username.isEmpty) return 'U';
+    return username[0].toUpperCase();
   }
 }

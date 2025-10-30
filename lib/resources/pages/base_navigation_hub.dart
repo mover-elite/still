@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:nylo_framework/nylo_framework.dart';
@@ -7,6 +8,7 @@ import '../widgets/calls_tab_widget.dart';
 import '../widgets/channels_tab_widget.dart';
 import '../widgets/chats_tab_widget.dart';
 import '../widgets/settings_tab_widget.dart';
+import '../../app/services/chat_service.dart';
 
 class BaseNavigationHub extends NyStatefulWidget with BottomNavPageControls {
   static RouteView path = ("/base", (_) => BaseNavigationHub());
@@ -22,11 +24,15 @@ class BaseNavigationHub extends NyStatefulWidget with BottomNavPageControls {
 }
 
 class _BaseNavigationHubState extends NavigationHub<BaseNavigationHub> {
+  int _totalUnreadCount = 0;
+  Timer? _unreadCountTimer;
+
   /// Layouts:
   /// - [NavigationHubLayout.bottomNav] Bottom navigation
   /// - [NavigationHubLayout.topNav] Top navigation
   /// - [NavigationHubLayout.journey] Journey navigation
-  NavigationHubLayout? layout = NavigationHubLayout.bottomNav(
+  @override
+  NavigationHubLayout get layout => NavigationHubLayout.bottomNav(
     selectedFontSize: 13,
     unselectedFontSize: 13,
     backgroundColor: Colors.transparent, // Keep transparent for blur effect
@@ -40,10 +46,149 @@ class _BaseNavigationHubState extends NavigationHub<BaseNavigationHub> {
   @override
   bool get maintainState => true;
 
+  @override
+  void initState() {
+    super.initState();
+    // Load immediately
+    _updateUnreadCount();
+    
+    // Set up periodic timer to check every 2 seconds
+    _unreadCountTimer = Timer.periodic(Duration(seconds: 2), (timer) {
+      _updateUnreadCount();
+    });
+  }
+
+  @override
+  void dispose() {
+    _unreadCountTimer?.cancel();
+    super.dispose();
+  }
+
+  void _updateUnreadCount() async {
+    try {
+      final chats = await ChatService().loadChatList();
+      int unreadCount = 0;
+      for (var chat in chats) {
+        unreadCount += chat.unreadCount;
+      }
+      if (mounted) {
+        setState(() {
+          _totalUnreadCount = unreadCount;
+        });
+      }
+    } catch (e) {
+      print('❌ Error updating unread count: $e');
+    }
+  }
+
   /// Override bottomNavBuilder to add blur effect and proper spacing
   @override
   Widget bottomNavBuilder(
       BuildContext context, Widget body, Widget? bottomNavigationBar) {
+    // Check if bottomNavigationBar is null
+    if (bottomNavigationBar == null) {
+      return Scaffold(body: body);
+    }
+
+    // Rebuild bottom nav with custom icons
+    if (bottomNavigationBar is BottomNavigationBar) {
+      final items = <BottomNavigationBarItem>[
+        BottomNavigationBarItem(
+          icon: _buildChatIcon(false, _totalUnreadCount),
+          activeIcon: _buildChatIcon(true, _totalUnreadCount),
+          label: "Chats",
+        ),
+        BottomNavigationBarItem(
+          icon: Container(
+            child: SvgPicture.asset(
+              'public/images/channel_tab.svg',
+              width: 19,
+              height: 19,
+              colorFilter: ColorFilter.mode(
+                Color(0xff6E6E6E),
+                BlendMode.srcIn,
+              ),
+            ),
+          ),
+          activeIcon: Container(
+            child: SvgPicture.asset(
+              'public/images/channel_tab.svg',
+              width: 19,
+              height: 19,
+              colorFilter: ColorFilter.mode(
+                Color(0xffFBFBFC),
+                BlendMode.srcIn,
+              ),
+            ),
+          ),
+          label: "Channels",
+        ),
+        BottomNavigationBarItem(
+          icon: Container(
+            child: SvgPicture.asset(
+              'public/images/call.svg',
+              width: 19,
+              height: 19,
+              colorFilter: ColorFilter.mode(
+                Color(0xff6E6E6E),
+                BlendMode.srcIn,
+              ),
+            ),
+          ),
+          activeIcon: Container(
+            child: SvgPicture.asset(
+              'public/images/call.svg',
+              width: 19,
+              height: 19,
+              colorFilter: ColorFilter.mode(
+                Color(0xffFBFBFC),
+                BlendMode.srcIn,
+              ),
+            ),
+          ),
+          label: "Calls",
+        ),
+        BottomNavigationBarItem(
+          icon: Container(
+            child: SvgPicture.asset(
+              'public/images/setting.svg',
+              width: 19,
+              height: 19,
+              colorFilter: ColorFilter.mode(
+                Color(0xff6E6E6E),
+                BlendMode.srcIn,
+              ),
+            ),
+          ),
+          activeIcon: Container(
+            child: SvgPicture.asset(
+              'public/images/setting.svg',
+              width: 19,
+              height: 19,
+              colorFilter: ColorFilter.mode(
+                Color(0xffFBFBFC),
+                BlendMode.srcIn,
+              ),
+            ),
+          ),
+          label: "Settings",
+        ),
+      ];
+
+      bottomNavigationBar = BottomNavigationBar(
+        items: items,
+        currentIndex: bottomNavigationBar.currentIndex,
+        onTap: bottomNavigationBar.onTap,
+        type: bottomNavigationBar.type,
+        backgroundColor: bottomNavigationBar.backgroundColor,
+        selectedItemColor: bottomNavigationBar.selectedItemColor,
+        unselectedItemColor: bottomNavigationBar.unselectedItemColor,
+        selectedFontSize: bottomNavigationBar.selectedFontSize,
+        unselectedFontSize: bottomNavigationBar.unselectedFontSize,
+        elevation: bottomNavigationBar.elevation,
+      );
+    }
+
     return Scaffold(
       body: body,
       extendBody: true, // Allow body to extend behind bottom nav
@@ -73,6 +218,58 @@ class _BaseNavigationHubState extends NavigationHub<BaseNavigationHub> {
     );
   }
 
+  Widget _buildChatIcon(bool isActive, int unreadCount) {
+    return Container(
+      padding: EdgeInsets.only(top: 2),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          SvgPicture.asset(
+            isActive ? 'public/images/chat_tab.svg' : 'public/images/chat_icon.svg',
+            colorFilter: ColorFilter.mode(
+              isActive ? Color(0xFFFBFBFC) : Color(0xff6E6E6E),
+              BlendMode.srcIn,
+            ),
+            width: 19,
+            height: 19,
+          ),
+          // Custom Badge
+          if (unreadCount > 0)
+            Positioned(
+              right: -6,
+              top: -6,
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                constraints: BoxConstraints(
+                  minWidth: 18,
+                  minHeight: 18,
+                ),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF57A1FF), Color(0xFF3B69C6)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Center(
+                  child: Text(
+                    unreadCount > 99 ? '99+' : '$unreadCount',
+                    style: TextStyle(
+                      color: Color(0xFFFBFBFC),
+                      fontSize: isActive ? 12 : 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   /// Navigation pages
   _BaseNavigationHubState()
       : super(() async {
@@ -83,101 +280,25 @@ class _BaseNavigationHubState extends NavigationHub<BaseNavigationHub> {
               title: "Chats",
               page: ChatsTab(),
               icon: Container(
-                padding: EdgeInsets.only(top: 2),
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    SvgPicture.asset(
-                      'public/images/chat_icon.svg',
-                      colorFilter: ColorFilter.mode(
-                        Color(0xff6E6E6E),
-                        BlendMode.srcIn,
-                      ),
-                      width: 19,
-                      height: 19,
-                    ),
-                    // Custom Badge
-                    Positioned(
-                      right: -6,
-                      top: -6,
-                      child: Container(
-                        padding:
-                            EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        constraints: BoxConstraints(
-                          minWidth: 18,
-                          minHeight: 18,
-                        ),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [Color(0xFF57A1FF), Color(0xFF3B69C6)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(9),
-                        ),
-                        child: Center(
-                          child: Text(
-                            '15',
-                            style: TextStyle(
-                              color: Color(0xFFFBFBFC),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                child: SvgPicture.asset(
+                  'public/images/chat_icon.svg',
+                  colorFilter: ColorFilter.mode(
+                    Color(0xff6E6E6E),
+                    BlendMode.srcIn,
+                  ),
+                  width: 19,
+                  height: 19,
                 ),
               ),
               activeIcon: Container(
-                padding: EdgeInsets.only(top: 2),
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    SvgPicture.asset(
-                      'public/images/chat_tab.svg',
-                      width: 19,
-                      height: 19,
-                      colorFilter: ColorFilter.mode(
-                        Color(0xFFFBFBFC),
-                        BlendMode.srcIn,
-                      ),
-                    ),
-                    // Custom Badge for active state
-                    Positioned(
-                      right: -6,
-                      top: -6,
-                      child: Container(
-                        padding:
-                            EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                        constraints: BoxConstraints(
-                          minWidth: 18,
-                          minHeight: 18,
-                        ),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [Color(0xFF57A1FF), Color(0xFF3B69C6)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(9),
-                        ),
-                        child: Center(
-                          child: Text(
-                            '15',
-                            style: TextStyle(
-                              color: Color(0xFFFBFBFC),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                child: SvgPicture.asset(
+                  'public/images/chat_tab.svg',
+                  width: 19,
+                  height: 19,
+                  colorFilter: ColorFilter.mode(
+                    Color(0xFFFBFBFC),
+                    BlendMode.srcIn,
+                  ),
                 ),
               ),
             ),

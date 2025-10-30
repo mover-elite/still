@@ -188,12 +188,16 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   Future<void> _sendReadReceipts(List<Message> messages) async {
     if (_currentUserId == null) return;
     final unreadMessageIds = messages
-        .where((msg) => msg.senderId != _currentUserId)
+        .where((msg) => msg.senderId != _currentUserId && !msg.isRead)
         .map((msg) => msg.id)
         .toList();
     if (unreadMessageIds.isNotEmpty) {
       try {
-        await WebSocketService().sendReadReceipt(unreadMessageIds);
+        print("Sending read receipts for messages: $unreadMessageIds");
+        final highestId = unreadMessageIds.reduce((a, b) => a > b ? a : b);
+        // print("Chat id is: ${_chat!.id}");
+        // print("$highestId");
+        await WebSocketService().sendReadReceipt(highestId, _chat!.id);
         print('✅ Read receipts sent for messages: $unreadMessageIds');
       } catch (e) {
         print('❌ Error sending read receipts: $e');
@@ -211,7 +215,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         }
 
         // Then connect to specific chat
-        await WebSocketService().connectToChat(chatId: _chat!.id.toString());
+        // await WebSocketService().connectToChat(chatId: _chat!.id.toString());
         _isWebSocketConnected = WebSocketService().isConnected;
 
         print('WebSocket connected: $_isWebSocketConnected');
@@ -389,18 +393,18 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         }).toList();
       });
     } else if (notificationData['action'] == "message:read") {
-      print(notificationData['ids']);
-      final dynamic idsData = notificationData['ids'];
-      final List<int> ids =
-          (idsData as List<dynamic>).map((e) => e as int).toList();
-      setState(() {
-        _messages = _messages.map((msg) {
-          if (ids.contains(msg.id)) {
-            msg.isRead = true;
-          }
-          return msg;
-        }).toList();
-      });
+      // print(notificationData['ids']);
+      // final dynamic idsData = notificationData['ids'];
+      // final List<int> ids =
+      //     (idsData as List<dynamic>).map((e) => e as int).toList();
+      // setState(() {
+      //   _messages = _messages.map((msg) {
+      //     if (ids.contains(msg.id)) {
+      //       msg.isRead = true;
+      //     }
+      //     return msg;
+      //   }).toList();
+      // });
     }
   }
 
@@ -425,7 +429,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
 
     setState(() {
       final action = messageData['action'];
-
+      print('Message action: $action');
       if (action != null && action == 'delete') {
         final index =
             _messages.indexWhere((msg) => msg.id == messageData['id']);
@@ -435,6 +439,65 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         if (index != -1) {
           _messages.removeAt(index);
         }
+      } else if (action != null && action == 'edit'){
+        print("Message edited: ${messageData['id']}");
+        print("messageData: $messageData");
+        
+          final index =
+            _messages.indexWhere((msg) => msg.id == messageData['id']);
+          if (index != -1) {
+            final old = _messages[index];
+
+            final bool isTextType =
+              (old.type ?? '').toString().toUpperCase() == 'TEXT';
+
+            final updatedText = isTextType
+              ? (messageData['text'] as String?) ?? old.text
+              : old.text;
+            final updatedCaption = !isTextType
+              ? (messageData['caption'] as String?) ?? old.caption
+              : old.caption;
+
+            final DateTime updatedAt = messageData['updatedAt'] != null
+              ? (DateTime.tryParse(messageData['updatedAt'].toString()) ??
+                DateTime.now())
+              : DateTime.now();
+
+            // Replace message with an updated instance preserving existing fields
+            _messages[index] = Message(
+            id: old.id,
+            senderId: old.senderId,
+            chatId: old.chatId,
+            type: old.type,
+            text: updatedText,
+            caption: updatedCaption,
+            fileId: old.fileId,
+            tempImagePath: old.tempImagePath,
+            tempVideoPath: old.tempVideoPath,
+            createdAt: old.createdAt,
+            updatedAt: updatedAt,
+            sender: old.sender,
+            referenceId: old.referenceId,
+            isSent: old.isSent,
+            statuses: old.statuses,
+            isRead: old.isRead,
+            isDelivered: old.isDelivered,
+            isAudio: old.isAudio,
+            audioDuration: old.audioDuration,
+            );
+
+            // Keep chat list in sync without incrementing unread count
+            if (_chat != null) {
+            ChatService().updateChatListWithMessage(
+              _chat!.id,
+              _messages[index],
+              incrementUnread: false,
+            );
+            }
+          }
+
+        
+      
       } else {
         Message newMessage = Message.fromJson(messageData);
 
@@ -474,7 +537,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         }
 
         if (newMessage.senderId != _currentUserId) {
-          WebSocketService().sendReadReceipt([newMessage.id]);
+          WebSocketService().sendReadReceipt(newMessage.id, _chat!.id);
         }
       }
     });
@@ -1840,6 +1903,24 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
     );
   }
 
+  /// Helper to get sender name for group chats
+  String? _getSenderName(Message message, bool isSentByMe) {
+    final bool isGroupChat = _chat?.type == 'CHANNEL';
+    
+    if (!isGroupChat || isSentByMe) {
+      return null;
+    }
+    
+    if (message.sender.firstName != null && message.sender.firstName!.isNotEmpty) {
+      String name = message.sender.firstName!;
+      if (message.sender.lastName != null && message.sender.lastName!.isNotEmpty) {
+        name = '$name ${message.sender.lastName}';
+      }
+      return name;
+    }
+    return message.sender.username;
+  }
+
   Widget _buildMessage(Message message) {
     
     switch (message.type) {
@@ -1927,6 +2008,9 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
     final bool isLastMessage =
         _messages.isNotEmpty && _messages.last == message;
 
+    // Get sender name for group chats
+    final senderName = _getSenderName(message, isSentByMe);
+
     return Container(
       margin: EdgeInsets.fromLTRB(2, 0, 2,
           isLastMessage ? 20 : 4), // Extra bottom margin for last message
@@ -1936,11 +2020,14 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         children: [
           if (!isSentByMe) const SizedBox(width: 10),
           Flexible(
-            child: GestureDetector(
-              onTapDown: (TapDownDetails details) {
-                _showMessageContextMenu(context, message, details.globalPosition);
-              },
-              child: Container(
+            child: Column(
+              crossAxisAlignment: isSentByMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
+                  onTapDown: (TapDownDetails details) {
+                    _showMessageContextMenu(context, message, details.globalPosition);
+                  },
+                  child: Container(
                 constraints: BoxConstraints(
                   maxWidth: MediaQuery.of(context).size.width * 0.7,
                 ),
@@ -1974,6 +2061,18 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Show sender name for group chats inside the bubble
+                    if (senderName != null) ...[
+                      Text(
+                        senderName,
+                        style: const TextStyle(
+                          color: Color(0xFFFF9800), // Orange/amber color
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                    ],
                     if (message.isAudio)
                       Row(
                         children: [
@@ -2055,6 +2154,8 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                 ),
               ),
             ),
+          ],
+        ),
           ),
           if (isSentByMe) const SizedBox(width: 10),
         ],
@@ -2065,6 +2166,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   Widget _buildAudioMessage(Message message) {
     final bool isCurrentlyPlaying = _playingMessageId == message.id && _isAudioPlaying;
     final bool isSentByMe = _currentUserId != null && message.senderId == _currentUserId;
+    final senderName = _getSenderName(message, isSentByMe);
     
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
@@ -2073,7 +2175,10 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         children: [
           if (!isSentByMe) const SizedBox(width: 10),
           Flexible(
-            child: GestureDetector(
+            child: Column(
+              crossAxisAlignment: isSentByMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
               onTapDown: (TapDownDetails details) {
                 _showMessageContextMenu(context, message, details.globalPosition);
               },
@@ -2099,114 +2204,136 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                           bottomRight: Radius.circular(18),
                         ),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    GestureDetector(
-                      onTap: () {
-                        if (isCurrentlyPlaying) {
-                          _pauseAudioMessage();
-                        } else if (_playingMessageId == message.id) {
-                          _playAudioMessage(message);
-                        } else {
-                          _playAudioMessage(message);
-                        }
-                        HapticFeedback.lightImpact();
-                      },
-                      child: Container(
-                        width: 40,
-                        height: 40,
-                        margin: EdgeInsets.only(bottom: 10, left: 5),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.2),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          isCurrentlyPlaying ? Icons.pause : Icons.play_arrow,
-                          color: Colors.white,
-                          size: 24,
+                    // Show sender name inside bubble for group chats
+                    if (senderName != null) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(left: 12, top: 8, right: 12),
+                        child: Text(
+                          senderName,
+                          style: const TextStyle(
+                            color: Color(0xFFFF9800),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Audio waveform visualization
-                          Container(
-                            height:30,
-                            margin: EdgeInsets.only(top: 8),
-                            child: Row(
-                              children: List.generate(15, (index) {
-                                double height = [
-                                  0.3, 0.7, 0.5, 0.9, 0.4, 0.8, 0.6, 0.3,
-                                  0.7, 0.5, 0.9, 0.4, 0.8, 0.6, 0.3
-                                ][index];
-                                
-                                // Animate waveform based on progress
-                                double progress = _audioDuration.inMilliseconds > 0 
-                                    ? _audioPosition.inMilliseconds / _audioDuration.inMilliseconds 
-                                    : 0.0;
-                                bool isActive = (index / 15) <= progress;
-                                
-                                return Container(
-                                  width: 3,
-                                  height: 30 * height,
-                                  margin: const EdgeInsets.symmetric(horizontal: 1.5),
-                                  decoration: BoxDecoration(
-                                    color: isActive && isCurrentlyPlaying 
-                                        ? Colors.white
-                                        : Colors.white.withOpacity(0.5),
-                                    borderRadius: BorderRadius.circular(1.5),
-                                  ),
-                                );
-                              }),
+                      const SizedBox(height: 4),
+                    ],
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: () {
+                            if (isCurrentlyPlaying) {
+                              _pauseAudioMessage();
+                            } else if (_playingMessageId == message.id) {
+                              _playAudioMessage(message);
+                            } else {
+                              _playAudioMessage(message);
+                            }
+                            HapticFeedback.lightImpact();
+                          },
+                          child: Container(
+                            width: 40,
+                            height: 40,
+                            margin: EdgeInsets.only(bottom: 10, left: 5),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              isCurrentlyPlaying ? Icons.pause : Icons.play_arrow,
+                              color: Colors.white,
+                              size: 24,
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                _playingMessageId == message.id 
-                                    ? _formatDuration(_audioPosition)
-                                    : message.audioDuration ?? "0:00",
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
+                              // Audio waveform visualization
+                              Container(
+                                height:30,
+                                margin: EdgeInsets.only(top: 8),
+                                child: Row(
+                                  children: List.generate(15, (index) {
+                                    double height = [
+                                      0.3, 0.7, 0.5, 0.9, 0.4, 0.8, 0.6, 0.3,
+                                      0.7, 0.5, 0.9, 0.4, 0.8, 0.6, 0.3
+                                    ][index];
+                                    
+                                    // Animate waveform based on progress
+                                    double progress = _audioDuration.inMilliseconds > 0 
+                                        ? _audioPosition.inMilliseconds / _audioDuration.inMilliseconds 
+                                        : 0.0;
+                                    bool isActive = (index / 15) <= progress;
+                                    
+                                    return Container(
+                                      width: 3,
+                                      height: 30 * height,
+                                      margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                                      decoration: BoxDecoration(
+                                        color: isActive && isCurrentlyPlaying 
+                                            ? Colors.white
+                                            : Colors.white.withOpacity(0.5),
+                                        borderRadius: BorderRadius.circular(1.5),
+                                      ),
+                                    );
+                                  }),
                                 ),
                               ),
+                              const SizedBox(height: 8),
                               Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    message.createdAt.toIso8601String().substring(11, 16),
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.7),
+                                    _playingMessageId == message.id 
+                                        ? _formatDuration(_audioPosition)
+                                        : message.audioDuration ?? "0:00",
+                                    style: const TextStyle(
+                                      color: Colors.white,
                                       fontSize: 12,
                                     ),
                                   ),
-                                  if (isSentByMe) ...[
-                                    const SizedBox(width: 4),
-                                    Icon(
-                                      message.isRead ? Icons.done_all : Icons.done,
-                                      color: message.isRead 
-                                          ? Colors.blue 
-                                          : Colors.white.withOpacity(0.7),
-                                      size: 16,
-                                    ),
-                                  ],
+                                  Row(
+                                    children: [
+                                      Text(
+                                        message.createdAt.toIso8601String().substring(11, 16),
+                                        style: TextStyle(
+                                          color: Colors.white.withOpacity(0.7),
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                      if (isSentByMe) ...[
+                                        const SizedBox(width: 4),
+                                        Icon(
+                                          message.isRead ? Icons.done_all : Icons.done,
+                                          color: message.isRead 
+                                              ? Colors.blue 
+                                              : Colors.white.withOpacity(0.7),
+                                          size: 16,
+                                        ),
+                                      ],
+                                    ],
+                                  ),
                                 ],
                               ),
                             ],
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
             ),
+          ],
+        ),
           ),
           if (isSentByMe) const SizedBox(width: 10),
         ],
@@ -2226,6 +2353,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         _currentUserId != null && message.senderId == _currentUserId;
     final bool isLastMessage =
         _messages.isNotEmpty && _messages.last == message;
+    final senderName = _getSenderName(message, isSentByMe);
 
     return Container(
       margin: EdgeInsets.fromLTRB(2, 0, 2,
@@ -2236,7 +2364,10 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         children: [
           if (!isSentByMe) const SizedBox(width: 10),
           Flexible(
-            child: GestureDetector(
+            child: Column(
+              crossAxisAlignment: isSentByMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
               onTapDown: (TapDownDetails details) {
                 _showMessageContextMenu(context, message, details.globalPosition);
               },
@@ -2265,6 +2396,21 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Show sender name inside bubble for group chats
+                    if (senderName != null) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(left: 12, top: 8, right: 12),
+                        child: Text(
+                          senderName,
+                          style: const TextStyle(
+                            color: Color(0xFFFF9800),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                    ],
                     // Image display
                     ClipRRect(
                       borderRadius: const BorderRadius.only(
@@ -2436,6 +2582,8 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                 ),
               ),
             ),
+          ],
+        ),
           ),
           if (isSentByMe) const SizedBox(width: 10),
         ],
@@ -2445,6 +2593,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
 
   Widget _buildVideoMessage(Message message) {
     final bool isSentByMe = _currentUserId != null && message.senderId == _currentUserId;
+    final senderName = _getSenderName(message, isSentByMe);
   // fileId/tempVideoPath not needed in new thumbnail+fullscreen approach
 
     return Padding(
@@ -2455,7 +2604,10 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         children: [
           if (!isSentByMe) const SizedBox(width: 10),
           Flexible(
-            child: GestureDetector(
+            child: Column(
+              crossAxisAlignment: isSentByMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
               onTapDown: (TapDownDetails details) {
                 _showMessageContextMenu(context, message, details.globalPosition);
               },
@@ -2491,6 +2643,21 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // Show sender name inside bubble for group chats
+                          if (senderName != null) ...[
+                            Padding(
+                              padding: const EdgeInsets.only(left: 12, top: 8, right: 12),
+                              child: Text(
+                                senderName,
+                                style: const TextStyle(
+                                  color: Color(0xFFFF9800),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                          ],
                           // Video preview/thumbnail
                           GestureDetector(
                             behavior: HitTestBehavior.opaque,
@@ -2621,6 +2788,8 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                 ),
               ),
             ),
+          ],
+        ),
           ),
           if (isSentByMe) const SizedBox(width: 10),
         ],
@@ -3600,35 +3769,37 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   void _updateMessage(Message message, String newText) async {
     try {
       // Update UI immediately for better UX
-      setState(() {
-        final index = _messages.indexWhere((msg) => msg.id == message.id);
-        if (index != -1) {
-          // Create new Message object with updated text
-          final updatedMessage = Message(
-            id: message.id,
-            senderId: message.senderId,
-            chatId: message.chatId,
-            type: message.type,
-            text: newText,
-            caption: message.caption,
-            fileId: message.fileId,
-            tempImagePath: message.tempImagePath,
-            createdAt: message.createdAt,
-            updatedAt: DateTime.now(),
-            sender: message.sender,
-            isSent: message.isSent,
-            isDelivered: message.isDelivered,
-            isRead: message.isRead,
-            isAudio: message.isAudio,
-            audioDuration: message.audioDuration,
-            referenceId: message.referenceId,
-            statuses: message.statuses,
-          );
-          _messages[index] = updatedMessage;
-        }
-      });
+      // setState(() {
+      //   final index = _messages.indexWhere((msg) => msg.id == message.id);
+      //   if (index != -1) {
+      //     // Create new Message object with updated text
+      //     final updatedMessage = Message(
+      //       id: message.id,
+      //       senderId: message.senderId,
+      //       chatId: message.chatId,
+      //       type: message.type,
+      //       text: newText,
+      //       caption: message.caption,
+      //       fileId: message.fileId,
+      //       tempImagePath: message.tempImagePath,
+      //       createdAt: message.createdAt,
+      //       updatedAt: DateTime.now(),
+      //       sender: message.sender,
+      //       isSent: message.isSent,
+      //       isDelivered: message.isDelivered,
+      //       isRead: message.isRead,
+      //       isAudio: message.isAudio,
+      //       audioDuration: message.audioDuration,
+      //       referenceId: message.referenceId,
+      //       statuses: message.statuses,
+      //     );
+      //     _messages[index] = updatedMessage;
+      //   }
+      // });
 
-      _showSnackBar('Message updated locally (API integration needed)');
+      // _showSnackBar('Message updated locally (API integration needed)');
+    
+      WebSocketService().sendEditMessage(message.id, message.chatId, newText);
     } catch (e) {
       print('Error updating message: $e');
       _showSnackBar('Failed to update message');
@@ -3647,11 +3818,12 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   void _removeMessage(Message message) async {
     try {
       // Remove from UI immediately for better UX
-      setState(() {
-        _messages.removeWhere((msg) => msg.id == message.id);
-      });
-
-      _showSnackBar('Message deleted locally (API integration needed)');
+      // setState(() {
+      //   _messages.removeWhere((msg) => msg.id == message.id);
+      // });
+      print("Deleting message id: ${message.id} from chat id: ${message.chatId}");
+      WebSocketService().sendDeleteMessage(message.id, message.chatId);
+      // _showSnackBar('Message deleted locally (API integration needed)');
     } catch (e) {
       print('Error deleting message: $e');
       _showSnackBar('Failed to delete message');
@@ -3987,6 +4159,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
   Widget _buildDocumentMessage(Message message) {
     final bool isSentByMe = _currentUserId != null && message.senderId == _currentUserId;
     final bool isLastMessage = _messages.isNotEmpty && _messages.last == message;
+    final senderName = _getSenderName(message, isSentByMe);
     final fileName = message.text ?? 'Document';
     final caption = message.caption;
     // Local cached path map key could be message.fileId or referenceId; we'll attempt to build deterministic temp path
@@ -3998,7 +4171,10 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         children: [
           if (!isSentByMe) const SizedBox(width: 10),
           Flexible(
-            child: ConstrainedBox(
+            child: Column(
+              crossAxisAlignment: isSentByMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                ConstrainedBox(
               constraints: BoxConstraints(
                 maxWidth: MediaQuery.of(context).size.width * 0.7,
                 minWidth: 160,
@@ -4041,6 +4217,18 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Show sender name inside bubble for group chats
+                      if (senderName != null) ...[
+                        Text(
+                          senderName,
+                          style: const TextStyle(
+                            color: Color(0xFFFF9800),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -4111,6 +4299,8 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                 ),
               ),
             ),
+          ],
+        ),
           ),
           if (isSentByMe) const SizedBox(width: 10),
         ],

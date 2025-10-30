@@ -398,4 +398,57 @@ class ChatApiService extends ApiService {
       return null;
     }
   }
+
+  /// Get available users to add to chat (all users except current user)
+  Future<List<User>> getAvailableUsers() async {
+    try {
+      final response = await network<List<User>>(
+        request: (request) => request.get("/user/available"),
+      );
+      return response ?? [];
+    } catch (e) {
+      print('Error fetching available users: $e');
+      return [];
+    }
+  }
+
+  /// Add members to a chat
+  Future<Map<String, List<int>>?> addMembersToChat(int chatId, List<int> memberIds) async {
+    try {
+      final url = "/chat/members/$chatId";
+      print('Adding members to chat. URL: $url, Member IDs: $memberIds');
+      
+      final response = await network(
+        request: (request) => request.post(
+          url,
+          data: {
+            "userIds": memberIds,
+          },
+        ),
+        handleSuccess: (response) => response.data,
+      );
+
+      if (response == null) return null;
+
+      final data = response as Map<String, dynamic>;
+
+      return {
+        "added": (data['added'] as List<dynamic>?)
+                ?.map((e) => e as int)
+                .toList() ??
+            [],
+        "alreadyMembers": (data['alreadyMembers'] as List<dynamic>?)
+                ?.map((e) => e as int)
+                .toList() ??
+            [],
+        "notFound": (data['notFound'] as List<dynamic>?)
+                ?.map((e) => e as int)
+                .toList() ??
+            [],
+      };
+    } catch (e) {
+      print('Error adding members to chat: $e');
+      return null;
+    }
+  }
 }

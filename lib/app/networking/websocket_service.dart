@@ -121,50 +121,40 @@ class WebSocketService {
     }
   }
 
-  /// Connect to a specific chat room
-  Future<void> connectToChat({required String chatId}) async {
-    // if (_currentChatId == chatId && _isConnected) {
-    //   print('Already connected to chat $chatId');
-    //   return;
-    // }
+  // 
+  Future<void> sendDeleteMessage(int messageID, int chatID) async {
+    if (!_isConnected || _socket == null) return;
 
-    // // Disconnect from current chat if different
-    // if (_currentChatId != null && _currentChatId != chatId) {
-    //   await _disconnectFromChat();
-    // }
-
-    // try {
-    //   _currentChatId = chatId;
-    //   // Emit a join event to the server for the chat room with acknowledgment
-    //   _socket?.emitWithAck('join_chat', {'chatId': chatId}, ack: (data) {
-    //     print('✅ Server acknowledged join_chat: $data');
-    //   });
-    //   _isConnected = true;
-    //   _reconnectAttempts = 0;
-    //   _connectionStatusController.add(true);
-    //   print('Socket.IO joined chat $chatId');
-    //   await _sendAuthMessage();
-    // } catch (e) {
-    //   print('Error connecting to chat $chatId: $e');
-    //   _handleError(e);
-    // }
-  }
-
-  /// Send authentication message with Bearer token
-  Future<void> _sendAuthMessage() async {
     try {
-      Map<String, dynamic>? userData = await Auth.data();
-      if (userData != null && userData['accessToken'] != null) {
-        final authMessage = {
-          'type': 'auth',
-          'token': userData['accessToken'],
-        };
-        _socket?.emit('auth', authMessage);
-      }
+      final deleteData = {
+        'messageId': messageID,
+        'chatId': chatID,
+      };
+
+      _socket!.emit('message:delete', deleteData);
+      print('Message delete requested: $deleteData');
     } catch (e) {
-      print('Error sending auth message: $e');
+      print('Error deleting message: $e');
     }
   }
+
+  Future<void> sendEditMessage(int messageID, int chatID, String text) async {
+    if (!_isConnected || _socket == null) return;
+
+    try {
+      final deleteData = {
+        'messageId': messageID,
+        'chatId': chatID,
+        "text": text,
+      };
+
+      _socket!.emit('message:edit', deleteData);
+      print('Message edit requested: $deleteData');
+    } catch (e) {
+      print('Error editing message: $e');
+    }
+  }
+  
 
   /// Handle incoming messages and route them to appropriate streams
   void _handleIncomingMessage(String type, dynamic data) {
@@ -178,7 +168,7 @@ class WebSocketService {
           break;
         case 'message:edit':
           print('Editing message: $messageData');
-          _messageController.add(messageData);
+          _messageController.add({'action': 'edit', ...messageData});
           break;
         case 'message:delete':
           print('Deleting message: $messageData');
@@ -244,11 +234,11 @@ class WebSocketService {
   }
 
   /// Send read receipt
-  Future<void> sendReadReceipt(List<int> messageIds) async {
+  Future<void> sendReadReceipt(int messageId, int chatId) async {
     if (!_isConnected || _socket == null) return;
 
     try {
-      _socket!.emit('message:read', messageIds);
+      _socket!.emit('message:read', {'messageId': messageId, 'chatId': chatId});
     } catch (e) {
       print('Error sending read receipt: $e');
     }
@@ -332,11 +322,7 @@ class WebSocketService {
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(delay, () {
       print('Attempting to reconnect... (attempt $_reconnectAttempts)');
-      if (_currentChatId != null) {
-        connectToChat(chatId: _currentChatId!);
-      } else {
-        initializeConnection();
-      }
+      initializeConnection();
     });
   }
 

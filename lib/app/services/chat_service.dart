@@ -5,6 +5,7 @@ import '/app/models/chat.dart';
 import '/app/models/message.dart';
 import '/app/networking/websocket_service.dart';
 import '/app/networking/chat_api_service.dart';
+import '/app/services/notification_service.dart';
 
 class ChatService {
   // Singleton pattern implementation
@@ -101,7 +102,7 @@ class ChatService {
   Future<List<Chat>> loadChatList() async {
     try {
       final chats = _chats.values.toList();
-      print("Loaded ${chats} chats");
+      // print("Loaded ${chats} chats");
 
       chats.sort((a, b) {
         final aTime =
@@ -137,6 +138,27 @@ class ChatService {
       return null;
     } catch (e) {
       print('❌ Error getting chat details: $e');
+      return null;
+    }
+  }
+
+  /// Refresh chat details from API and broadcast update
+  Future<Chat?> refreshChatDetails(int chatId) async {
+    try {
+      // Force fetch from API
+      final apiService = ChatApiService();
+      final chat = await apiService.getChatDetails(chatId: chatId);
+
+      if (chat != null) {
+        _chats[chatId] = chat;
+        // Broadcast the update to listeners
+        _chatController.add(chat);
+        return chat;
+      }
+
+      return null;
+    } catch (e) {
+      print('❌ Error refreshing chat details: $e');
       return null;
     }
   }
@@ -267,14 +289,14 @@ class ChatService {
   }
 
   /// Mark messages as read
-  Future<void> markMessagesAsRead(List<int> messageIds) async {
+  Future<void> markMessagesAsRead(int messageId, int chatId) async {
     try {
-      await WebSocketService().sendReadReceipt(messageIds);
+      await WebSocketService().sendReadReceipt(messageId, chatId);
 
       // Update local messages
       for (final chatMessages in _chatMessages.values) {
         for (final message in chatMessages) {
-          if (messageIds.contains(message.id)) {
+          if (message.id == messageId) {
             message.isRead = true;
           }
         }
@@ -282,7 +304,8 @@ class ChatService {
 
       _messageController.add({
         'type': 'messages_read',
-        'messageIds': messageIds,
+        'messageId': messageId,
+        'chatId': chatId,
       });
     } catch (e) {
       print('❌ Error marking messages as read: $e');
@@ -302,6 +325,24 @@ class ChatService {
       if (_seenMessageIds[message.chatId]!.contains(message.id) ||
           _chatMessages[message.chatId]!.any((m) => m.id == message.id)) {
         return;
+      }
+
+      // If app is backgrounded and chat is not active, show a local notification
+      final shouldNotify = !NotificationService.instance.isAppInForeground &&
+          !_activeChatScreens.contains(message.chatId);
+      if (shouldNotify) {
+        final chat = _chats[message.chatId];
+        final title = chat?.name ?? 'New message';
+        final text = (message.text?.isNotEmpty ?? false)
+            ? message.text!
+            : (message.caption?.isNotEmpty ?? false)
+                ? message.caption!
+                : (message.type.toUpperCase());
+        NotificationService.instance.showChatMessageNotification(
+          chatId: message.chatId,
+          title: title,
+          body: text,
+        );
       }
 
       // Check if this chat has an active screen that will handle the message
@@ -456,9 +497,16 @@ class ChatService {
   }
 
   /// Handle message read notification
-  void _handleMessageRead(Map<String, dynamic> data) {
+  void _handleMessageRead(Map<String, dynamic> data) async {
     try {
+      print("Handling message read notification: $data");
       final List<int> ids = List<int>.from(data['ids']);
+      final int chatId = data['chatId'];
+      final int userId = data['userId'];
+      
+      // Get current user ID
+      final userData = await Auth.data();
+      final int currentUserId = userData['id'];
 
       // Update local messages
       for (final chatMessages in _chatMessages.values) {
@@ -477,6 +525,21 @@ class ChatService {
             }
           }
         }
+      }
+
+      // Reduce unread count if the current user is the one who read the messages
+      if (userId == currentUserId && _chats.containsKey(chatId)) {
+        final chat = _chats[chatId]!;
+        final idsCount = ids.length;
+        
+        // Reduce unread count by the number of messages read, but not below 0
+        chat.unreadCount = (chat.unreadCount - idsCount).clamp(0, chat.unreadCount);
+        
+        print('📖 Reduced unread count for chat $chatId by $idsCount. New count: ${chat.unreadCount}');
+        
+        // Broadcast updated chat list
+        _chatController.add(chat);
+        _chatListController.add(_chats.values.toList());
       }
 
       _messageController.add({
