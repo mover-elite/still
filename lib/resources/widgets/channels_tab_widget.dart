@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -48,6 +49,19 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   // Persisted controllers to avoid losing text on rebuilds
   final TextEditingController _channelNameController = TextEditingController();
   final TextEditingController _channelDescriptionController = TextEditingController();
+  
+  // Contact selection state - persisted to avoid losing selections on rebuild
+  List<Contact> _selectedContacts = [];
+  Set<int> _selectedChatIds = {};
+  List<models.Chat> _topPrivateChats = [];
+  bool _loadedTopChats = false;
+  
+  // Current channel info for adding members
+  GroupCreationResponse? _currentChannelInfo;
+  bool _isAddingMembers = false;
+  
+  // Stream subscription for chat updates
+  StreamSubscription<List<models.Chat>>? _chatListSubscription;
 
   Future<void> _pickChannelImage() async {
     try {
@@ -73,7 +87,68 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   @override
   get init => () {
         _loadMyChannels();
+        _setupChatListListener();
       };
+  
+  void _setupChatListListener() {
+    // Listen to chat list updates from ChatService
+    _chatListSubscription = ChatService().chatListStream.listen((chats) {
+      if (!mounted) return;
+      
+      // Update the currently visible tab
+      if (_showMyChannels) {
+        _updateMyChannelsFromList(chats);
+      } else {
+        _updateJoinedChannelsFromList(chats);
+      }
+    });
+  }
+  
+  void _updateMyChannelsFromList(List<models.Chat> chats) async {
+    final userData = await Auth.data();
+    final uid = userData != null ? userData['id'] as int? : null;
+    final myChannelChats = chats.where((c) => c.type == 'CHANNEL' && (uid != null && c.creatorId == uid)).toList();
+
+    final mapped = myChannelChats.map((c) {
+      final image = c.avatar ?? 'image1.png';
+      final desc = c.description ?? '';
+      return Channel(
+        name: c.name,
+        description: desc,
+        image: image,
+        hasNotification: (c.unreadCount > 0),
+        chat: c,
+      );
+    }).toList();
+
+    if (mounted) {
+      setState(() {
+        _myChannels = mapped;
+      });
+    }
+  }
+  
+  void _updateJoinedChannelsFromList(List<models.Chat> chats) {
+    final joined = chats.where((c) => c.type == 'CHANNEL').toList();
+
+    final mapped = joined.map((c) {
+      final image = c.avatar ?? 'image1.png';
+      final desc = c.description ?? '';
+      return Channel(
+        name: c.name,
+        description: desc,
+        image: image,
+        hasNotification: (c.unreadCount > 0),
+        chat: c,
+      );
+    }).toList();
+
+    if (mounted) {
+      setState(() {
+        _joinedChannels = mapped;
+      });
+    }
+  }
 
   Future<void> _loadMyChannels() async {
     setState(() {
@@ -961,7 +1036,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
               TextButton(
                 onPressed: () {
                   Navigator.pop(context);
-                  _showContactSelection();
+                  _showContactSelection(channelInfo);
                 },
                 child: const Text(
                   'Next',
@@ -1340,7 +1415,19 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
     });
   }
 
-  void _showContactSelection() {
+  void _showContactSelection(GroupCreationResponse channelInfo) {
+    // Reset selections when opening contact selection
+    setState(() {
+      _selectedContacts = [];
+      _selectedChatIds = {};
+      _loadedTopChats = false;
+      _topPrivateChats = [];
+      _currentChannelInfo = channelInfo;
+    });
+    
+    // Load top chats before showing modal to avoid loading in Builder
+    _loadTopPrivateChats();
+    
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1348,15 +1435,110 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
       builder: (context) => _ContactSelection(),
     );
   }
+  
+  Future<void> _loadTopPrivateChats() async {
+    if (_loadedTopChats) return;
+    _loadedTopChats = true;
+    
+    try {
+      if (!ChatService().isInitialized) {
+        await ChatService().initialize();
+      }
+      final chats = await ChatService().loadChatList();
+      final filtered = chats.where((c) => c.type == 'PRIVATE').take(10).toList();
+      if (mounted) {
+        setState(() {
+          _topPrivateChats = filtered;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _topPrivateChats = [];
+        });
+      }
+    }
+  }
+
+  Future<void> _handleAddMembers() async {
+    if (_isAddingMembers || _currentChannelInfo == null) return;
+    
+    // Collect all selected user IDs from both contacts and chats
+    List<int> memberIds = [];
+    
+    // Add selected chat IDs (these are user IDs from private chats)
+    memberIds.addAll(_selectedChatIds);
+    
+    // Note: _selectedContacts uses Contact objects which don't have user IDs
+    // If you need to add contacts, you'll need to store their user IDs in the Contact model
+    
+    if (memberIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select at least one member to add'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isAddingMembers = true);
+    
+    try {
+      final result = await ChatApiService().addMembersToChat(
+        _currentChannelInfo!.id,
+        memberIds,
+      );
+      
+      if (!mounted) return;
+      
+      if (result != null) {
+        final addedCount = result['added']?.length ?? 0;
+        final alreadyMembersCount = result['alreadyMembers']?.length ?? 0;
+        final notFoundCount = result['notFound']?.length ?? 0;
+        
+        String message = '';
+        if (addedCount > 0) {
+          message = 'Successfully added $addedCount member${addedCount > 1 ? 's' : ''}';
+        }
+        if (alreadyMembersCount > 0) {
+          if (message.isNotEmpty) message += '. ';
+          message += '$alreadyMembersCount already member${alreadyMembersCount > 1 ? 's' : ''}';
+        }
+        if (notFoundCount > 0) {
+          if (message.isNotEmpty) message += '. ';
+          message += '$notFoundCount not found';
+        }
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message.isNotEmpty ? message : 'Members added successfully'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: addedCount > 0 ? Colors.green : Colors.orange,
+          ),
+        );
+        
+        // Close the contact selection modal
+        Navigator.pop(context);
+      } else {
+        throw Exception('Failed to add members');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to add members: $e'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isAddingMembers = false);
+    }
+  }
 
   Widget _ContactSelection() {
-    List<Contact> selectedContacts = [];
-    // Selected PRIVATE chats from recent row
-    Set<int> selectedChatIds = {};
-    // Top PRIVATE chats state for recent row
-    List<models.Chat> topPrivateChats = [];
-    bool loadedTopChats = false;
-
+    // Use state variables instead of local variables to persist selections across rebuilds
     return StatefulBuilder(
       builder: (context, setModalState) {
         return Container(
@@ -1411,18 +1593,15 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                       ),
                     ),
                     TextButton(
-                      onPressed: (selectedContacts.length + selectedChatIds.length) > 0
-                          ? () {
-                              // TODO: handle sending selected contacts/chats
-                              Navigator.pop(context);
-                            }
-                          : null,
+                      onPressed: _isAddingMembers ? null : _handleAddMembers,
                       child: Text(
-                        (selectedContacts.length + selectedChatIds.length) > 0
-                            ? 'Add (${selectedContacts.length + selectedChatIds.length})'
-                            : 'Add',
-                        style: const TextStyle(
-                          color: Color(0xFF3498DB),
+                        _isAddingMembers
+                            ? 'Adding...'
+                            : (_selectedContacts.length + _selectedChatIds.length) > 0
+                                ? 'Add (${_selectedContacts.length + _selectedChatIds.length})'
+                                : 'Add',
+                        style: TextStyle(
+                          color: _isAddingMembers ? Colors.grey : const Color(0xFF3498DB),
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
@@ -1468,59 +1647,45 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
               const SizedBox(height: 20),
 
               // Recent contacts row (Top PRIVATE chats from ChatService)
-              Builder(builder: (context) {
-                if (!loadedTopChats) {
-                  loadedTopChats = true;
-                  WidgetsBinding.instance.addPostFrameCallback((_) async {
-                    try {
-                      if (!ChatService().isInitialized) {
-                        await ChatService().initialize();
-                      }
-                      final chats = await ChatService().loadChatList();
-                      final filtered = chats.where((c) => c.type == 'PRIVATE').take(10).toList();
-                      setModalState(() {
-                        topPrivateChats = filtered;
-                      });
-                    } catch (_) {
-                      setModalState(() {
-                        topPrivateChats = [];
-                      });
-                    }
-                  });
-                }
-
-                return Container(
+              Container(
                   height: 80,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: ListView.builder(
                     scrollDirection: Axis.horizontal,
-                    itemCount: topPrivateChats.length,
+                    itemCount: _topPrivateChats.length,
                     itemBuilder: (context, index) {
-                      final chat = topPrivateChats[index];
+                      final chat = _topPrivateChats[index];
                       final displayName = chat.name;
                       final avatarUrl = chat.avatar ?? chat.partner?.avatar;
-                      final isSelected = selectedChatIds.contains(chat.id);
+                      final isSelected = _selectedChatIds.contains(chat.id);
 
                       Widget avatarWidget;
-                      if (avatarUrl != null && avatarUrl.startsWith('http')) {
-                        avatarWidget = Image.network(avatarUrl, fit: BoxFit.cover);
+                      if (avatarUrl != null) {
+                        final baseUrl = getEnv("API_BASE_URL") ?? '';
+                        final avatarLink = avatarUrl.startsWith('http') ? avatarUrl : '$baseUrl$avatarUrl';
+                        avatarWidget = Image.network(avatarLink, fit: BoxFit.cover);
                       } else if (avatarUrl != null && avatarUrl.isNotEmpty) {
                         avatarWidget = Image.asset(avatarUrl, fit: BoxFit.cover).localAsset();
                       } else {
-                        avatarWidget = Image.asset('image1.png', fit: BoxFit.cover).localAsset();
+                        avatarWidget = Center(
+                          child: Icon(
+                          Icons.person,
+                          color: Colors.grey.shade300,
+                          size: 24,
+                          ),
+                        );
                       }
 
                       return Container(
                         margin: const EdgeInsets.only(right: 16),
                         child: GestureDetector(
                           onTap: () {
-                            setModalState(() {
-                              if (isSelected) {
-                                selectedChatIds.remove(chat.id);
-                              } else {
-                                selectedChatIds.add(chat.id);
-                              }
-                            });
+                            if (isSelected) {
+                              _selectedChatIds.remove(chat.id);
+                            } else {
+                              _selectedChatIds.add(chat.id);
+                            }
+                            setModalState(() {});
                           },
                           child: Column(
                             children: [
@@ -1556,8 +1721,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                       );
                     },
                   ),
-                );
-              }),
+                ),
 
               // Invite link section
               Container(
@@ -1644,19 +1808,18 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                         } else {
                           // Contact item
                           final contact = item['contact'] as Contact;
-                          final isSelected = selectedContacts.contains(contact);
+                          final isSelected = _selectedContacts.contains(contact);
 
                           return Container(
                             margin: const EdgeInsets.only(bottom: 8),
                             child: GestureDetector(
                               onTap: () {
-                                setModalState(() {
-                                  if (isSelected) {
-                                    selectedContacts.remove(contact);
-                                  } else {
-                                    selectedContacts.add(contact);
-                                  }
-                                });
+                                if (isSelected) {
+                                  _selectedContacts.remove(contact);
+                                } else {
+                                  _selectedContacts.add(contact);
+                                }
+                                setModalState(() {});
                               },
                               child: Row(
                                 children: [
@@ -1694,13 +1857,12 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                                   ),
                                   GestureDetector(
                                     onTap: () {
-                                      setModalState(() {
-                                        if (isSelected) {
-                                          selectedContacts.remove(contact);
-                                        } else {
-                                          selectedContacts.add(contact);
-                                        }
-                                      });
+                                      if (isSelected) {
+                                        _selectedContacts.remove(contact);
+                                      } else {
+                                        _selectedContacts.add(contact);
+                                      }
+                                      setModalState(() {});
                                     },
                                     child: Container(
                                       width: 20,
@@ -1778,6 +1940,14 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
         );
       },
     );
+  }
+  
+  @override
+  void dispose() {
+    _chatListSubscription?.cancel();
+    _channelNameController.dispose();
+    _channelDescriptionController.dispose();
+    super.dispose();
   }
 }
 

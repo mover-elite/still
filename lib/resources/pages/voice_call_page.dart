@@ -45,6 +45,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       CallType.single; // Change to CallType.group for group calls
 
   StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
+  bool _isEndingCall = false; // Flag to prevent duplicate end call processing
   // Single call data
   String _contactName = "Layla B";
   String? _contactImage;
@@ -155,9 +156,41 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
   Future<void> _handleIncomingNotification(
       Map<String, dynamic> notificationData) async {
+    // Guard: Don't process if already disposed or not mounted
+    if (!mounted) {
+      print("⚠️ Notification received but widget not mounted, ignoring");
+      return;
+    }
+
+    // Guard: Don't process if call is already ending
+    if (_isEndingCall) {
+      print("⚠️ Notification received but call already ending, ignoring");
+      return;
+    }
+
+    // Guard: Don't process if room is already null
+    if (_room == null) {
+      print("⚠️ Notification received but room already disposed, ignoring");
+      return;
+    }
+
     print("Received notification: $notificationData");
     final action = notificationData['action'];
-    if (action == 'call:declined' && _callType == CallType.single) {
+    final notificationChatId = notificationData['chatId'];
+    
+    // Only process if it's for THIS call
+    if (action == 'call:declined' && 
+        _callType == CallType.single && 
+        notificationChatId == _chatId) {
+      print("📞 Processing call declined notification for chat $_chatId");
+      
+      // Set flag immediately to prevent duplicate processing
+      _isEndingCall = true;
+      
+      // Cancel subscription immediately to prevent duplicate processing
+      await _notificationSubscription?.cancel();
+      _notificationSubscription = null;
+      
       await _endCall();
     }
   }
@@ -609,7 +642,20 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
   /// ✅ End the call and navigate back
   Future<void> _endCall() async {
+    // Guard: Prevent duplicate end call processing
+    if (_isEndingCall) {
+      print("⚠️ _endCall already in progress, skipping duplicate call");
+      return;
+    }
+    
+    _isEndingCall = true;
+    print("📞 Starting call end process...");
+    
     try {
+      // Cancel notification subscription immediately
+      await _notificationSubscription?.cancel();
+      _notificationSubscription = null;
+      
       _stopTimer();
       _stopAllAnimations();
 
@@ -624,13 +670,17 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       // Example: Show call summary before leaving
       _showCallSummary();
 
+      // Send decline notification only if this user initiated the end
+      if (_chatId != null) {
+        WebSocketService().sendDeclineCall(_chatId!, "audio");
+      }
+      
       // Safely pop the navigator
       if (mounted && Navigator.canPop(context)) {
         Navigator.of(context).pop();
       }
-      WebSocketService().sendDeclineCall(_chatId!, "audio");
     } catch (e) {
-      print("Error ending call: $e");
+      print("❌ Error ending call: $e");
       // Try to pop even on error, but check if possible
       if (mounted && Navigator.canPop(context)) {
         try {
@@ -720,17 +770,27 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
   @override
   void dispose() {
+    print("🧹 Disposing voice call page...");
+    
+    // Set ending flag to prevent further processing
+    _isEndingCall = true;
+    
+    // Cancel notification subscription first
+    _notificationSubscription?.cancel();
+    _notificationSubscription = null;
+    
     // Ensure proper cleanup on widget disposal
     _stopTimer();
     _stopAllAnimations();
     _audioPlayer?.dispose();
+    
     // Clean up room connection asynchronously
     _ensureRoomCleanup().then((_) {
       print("🧹 Widget disposal cleanup completed");
     }).catchError((e) {
       print("⚠️ Error during widget disposal cleanup: $e");
     });
-    _notificationSubscription?.cancel();
+    
     _pulseController.dispose();
     _fadeController.dispose();
     super.dispose();

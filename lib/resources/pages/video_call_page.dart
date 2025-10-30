@@ -32,6 +32,7 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
   Room? _room;
   List<RemoteParticipant> _remoteParticipants = [];
   bool _isConnecting = false; // Prevent simultaneous connection attempts
+  bool _isEndingCall = false; // Flag to prevent duplicate end call processing
   EventsListener<RoomEvent>? _listener;
   // Remove unused _isCameraOn since we're using _isVideoOn for video state
   List<Map<String, dynamic>> _participantHistory =
@@ -164,18 +165,58 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
 
   Future<void> _handleIncomingNotification(
       Map<String, dynamic> notificationData) async {
+    // Guard: Don't process if already disposed or not mounted
+    if (!mounted) {
+      print("⚠️ Notification received but widget not mounted, ignoring");
+      return;
+    }
+
+    // Guard: Don't process if call is already ending
+    if (_isEndingCall) {
+      print("⚠️ Notification received but call already ending, ignoring");
+      return;
+    }
+
+    // Guard: Don't process if room is already null
+    if (_room == null) {
+      print("⚠️ Notification received but room already disposed, ignoring");
+      return;
+    }
+
     print("Received notification: $notificationData");
     final action = notificationData['action'];
-    if (action == 'call:declined' && _callType == CallType.single) {
+    final notificationChatId = notificationData['chatId'];
+    
+    // Only process if it's for THIS call
+    if (action == 'call:declined' && 
+        _callType == CallType.single && 
+        notificationChatId == _chatId) {
+      print("📞 Processing call declined notification for chat $_chatId");
+      
+      // Set flag immediately to prevent duplicate processing
+      _isEndingCall = true;
+      
+      // Cancel subscription immediately to prevent duplicate processing
+      await _notificationSubscription?.cancel();
+      _notificationSubscription = null;
+      
       await _endCall();
     }
   }
 
   @override
   void dispose() {
+    print("🧹 Disposing video call page...");
+    
+    // Set ending flag to prevent further processing
+    _isEndingCall = true;
+    
+    // Cancel notification subscription first
+    _notificationSubscription?.cancel();
+    _notificationSubscription = null;
+    
     _timer?.cancel();
     _fadeController.dispose();
-    _notificationSubscription?.cancel();
     _audioPlayer?.dispose();
 
     super.dispose();
@@ -482,9 +523,22 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
 
   /// ✅ End the call and navigate back
   Future<void> _endCall() async {
+    // Guard: Prevent duplicate end call processing
+    if (_isEndingCall) {
+      print("⚠️ _endCall already in progress, skipping duplicate call");
+      return;
+    }
+    
+    _isEndingCall = true;
+    print("📞 Starting call end process...");
+    
     try {
+      // Cancel notification subscription immediately
+      await _notificationSubscription?.cancel();
+      _notificationSubscription = null;
+      
       _stopAllAnimations();
-      _stopAllAnimations();
+      _timer?.cancel();
 
       // Capture final room state before cleanup
       if (_room != null) {
@@ -497,13 +551,17 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
       // Example: Show call summary before leaving
       // _showCallSummary();
 
+      // Send decline notification only if this user initiated the end
+      if (_chatId != null) {
+        WebSocketService().sendDeclineCall(_chatId!, "video");
+      }
+      
       // Safely pop the navigator
       if (mounted && Navigator.canPop(context)) {
         Navigator.of(context).pop();
       }
-      WebSocketService().sendDeclineCall(_chatId!, "audio");
     } catch (e) {
-      print("Error ending call: $e");
+      print("❌ Error ending call: $e");
       // Try to pop even on error, but check if possible
       if (mounted && Navigator.canPop(context)) {
         try {
