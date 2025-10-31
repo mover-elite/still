@@ -179,35 +179,63 @@ class ChatService {
 
   /// Get messages for a specific chat
   Future<List<Message>> getChatMessages(int chatId) async {
+    print('📨 getChatMessages called for chatId: $chatId');
+    print('📨 ChatService initialized: $_isInitialized');
+    print('📨 Initial messages loaded: ${_hasLoadInitialMessages[chatId] == true}');
+    
+    // Ensure ChatService is initialized before loading messages
+    if (!_isInitialized) {
+      print('⚠️ ChatService not initialized in getChatMessages, initializing now...');
+      await initialize();
+    }
+    
     // Check if initial messages have been loaded for this chat
     if (_hasLoadInitialMessages[chatId] != true) {
+      print('📨 Fetching initial messages from API for chat $chatId...');
       // Fetch initial messages from API
       final apiService = ChatApiService();
       final messagesResponse =
           await apiService.getChatMessages(chatId: chatId, limit: 50);
 
       if (messagesResponse?.messages.isNotEmpty == true) {
+        print('📨 Received ${messagesResponse!.messages.length} messages from API');
         // Initialize caches
         _chatMessages.putIfAbsent(chatId, () => []);
         _seenMessageIds.putIfAbsent(chatId, () => <int>{});
 
         // Filter out duplicates by ID
         final existingIds = _seenMessageIds[chatId]!;
-        final unique = messagesResponse!.messages
+        print('📨 Existing seen message IDs count: ${existingIds.length}');
+        print('📨 Current cached messages count: ${_chatMessages[chatId]!.length}');
+        
+        final unique = messagesResponse.messages
             .where((m) => !existingIds.contains(m.id))
             .toList();
+        
+        print('📨 Unique (not seen) messages count: ${unique.length}');
 
         // Insert fetched messages at the start of the list
         if (unique.isNotEmpty) {
           _chatMessages[chatId]!.insertAll(0, unique);
           existingIds.addAll(unique.map((m) => m.id));
+          print('📨 Added ${unique.length} unique messages to cache');
+        } else {
+          print('⚠️ All ${messagesResponse.messages.length} messages were already seen/cached!');
         }
-      } else if (!_chatMessages.containsKey(chatId)) {
-        _chatMessages[chatId] = [];
+      } else {
+        print('📨 No messages received from API or empty response');
+        if (!_chatMessages.containsKey(chatId)) {
+          _chatMessages[chatId] = [];
+        }
       }
       _hasLoadInitialMessages[chatId] = true;
+    } else {
+      print('📨 Using cached messages for chat $chatId');
     }
-    return _chatMessages[chatId] ?? [];
+    
+    final messages = _chatMessages[chatId] ?? [];
+    print('📨 Returning ${messages.length} messages for chat $chatId');
+    return messages;
   }
 
   /// Load previous messages for a chat given the last message ID
@@ -351,7 +379,7 @@ class ChatService {
       final userData = await Auth.data();
       final int currentUserId = userData['id'];
       final bool isMessageFromCurrentUser = (message.sender.id == currentUserId);
-
+      print("Message is from current user: $isMessageFromCurrentUser");
       // Check if this chat has an active screen that will handle the message
       if (_activeChatScreens.contains(message.chatId)) {
         // Update last message but do not increment unread
@@ -770,6 +798,7 @@ class ChatService {
     _chats.clear();
     _chatMessages.clear();
     _hasLoadInitialMessages.clear();
+    _seenMessageIds.clear();
     _activeChatScreens.clear();
     
     // Reset initialization flag

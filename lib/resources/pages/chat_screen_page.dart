@@ -147,6 +147,12 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
           print("Description: ${navigationData['description']}");
           
           if (chatId != null) {
+            // Ensure ChatService is initialized before loading messages
+            if (!ChatService().isInitialized) {
+              print('⏳ ChatService not initialized, initializing now...');
+              await ChatService().initialize();
+            }
+            
             _chat = await ChatService().getChatDetails(chatId);
             final messages = await ChatService().getChatMessages(chatId);
             
@@ -986,9 +992,9 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         );
         _messages.add(newMessage);
         
-        // Update chat list with the audio message
+        // Update chat list with the audio message (don't increment unread for own messages)
         if (_chat != null) {
-          ChatService().updateChatListWithMessage(_chat!.id, newMessage);
+          ChatService().updateChatListWithMessage(_chat!.id, newMessage, incrementUnread: false);
         }
         
         print('✅ Audio message added to list. Total messages: ${_messages.length}');
