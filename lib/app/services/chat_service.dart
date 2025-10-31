@@ -84,6 +84,9 @@ class ChatService {
           .listen(_handleWebSocketNotification);
       WebSocketService().messageStream.listen(_handleWebSocketMessage);
       
+      // Listen to call notification actions
+      NotificationService.instance.onCallAction.listen(_handleCallAction);
+      
       print('✅ ChatService initialized automatically');
     } catch (e) {
       print('❌ Error initializing ChatService: $e');
@@ -509,41 +512,40 @@ class ChatService {
       final chat = await getChatDetails(chatId);
 
       if (chat != null) {
-        if (type == "audio") {
-          await routeTo(
-            "/receive-call-screen",
-            data: {
-              'isGroup': false,
-              'partner': {
-                'username': chat.partner?.username ?? 'Unknown',
-                'avatar': chat.partner?.avatar ?? 'default_avatar.png',
-              },
-              'chatId': chatId,
-              'callerId': callerId,
-              'initiateCall': false, // This indicates joining, not initiating
-              'isJoining': true, // Flag to indicate this is an incoming call
-            },
-          );
+        final callData = {
+          'isGroup': false,
+          'partner': {
+            'username': chat.partner?.username ?? 'Unknown',
+            'avatar': chat.partner?.avatar ?? 'default_avatar.png',
+          },
+          'chatId': chatId,
+          'callerId': callerId,
+          'initiateCall': false, // This indicates joining, not initiating
+          'isJoining': true, // Flag to indicate this is an incoming call
+        };
+        
+        // Check if app is in foreground
+        if (NotificationService.instance.isAppInForeground) {
+          // App is in foreground, show the full-screen call UI
+          if (type == "audio") {
+            await routeTo("/receive-call-screen", data: callData);
+          } else {
+            await routeTo("/receive-video-call-screen", data: callData);
+          }
+          print('📞 Call screen opened for: $callKey (tracking will be cleared on call end)');
         } else {
-          await routeTo(
-            "/receive-video-call-screen",
-            data: {
-              'isGroup': false,
-              'partner': {
-                'username': chat.partner?.username ?? 'Unknown',
-                'avatar': chat.partner?.avatar ?? 'default_avatar.png',
-              },
-              'chatId': chatId,
-              'callerId': callerId,
-              'initiateCall': false, // This indicates joining, not initiating
-              'isJoining': true, // Flag to indicate this is an incoming call
-            },
+          // App is in background, show notification with actions
+          await NotificationService.instance.showIncomingCallNotification(
+            chatId: chatId,
+            callerId: callerId,
+            callerName: chat.partner?.username ?? 'Unknown',
+            callType: type,
           );
+          print('📞 Call notification shown for: $callKey');
         }
         
         // DON'T remove from active calls here - keep it to prevent duplicates
         // It will be removed when the call is answered, declined, or times out
-        print('📞 Call screen opened for: $callKey (tracking will be cleared on call end)');
       } else {
         // If chat is null, remove from tracking since navigation didn't happen
         _activeIncomingCalls.remove(callKey);
@@ -558,23 +560,82 @@ class ChatService {
   }
 
   /// Clear call tracking for a specific chat/caller combination
-  void clearIncomingCall(int chatId, int callerId, String type) {
+  void clearIncomingCall(int chatId, int callerId, String type) async {
     final callKey = '$chatId-$callerId-$type';
     _activeIncomingCalls.remove(callKey);
+    
+    // Cancel any active call notification
+    await NotificationService.instance.cancelCallNotification(chatId);
+    
     print('📞 Cleared incoming call tracking: $callKey');
   }
 
   /// Handle call ended/declined notification
-  void _handleCallEnded(Map<String, dynamic> data) {
+  void _handleCallEnded(Map<String, dynamic> data) async {
     try {
       final int chatId = data['chatId'];
       final int callerId = data['callerId'] ?? data['userId'];
       final String type = data['type'] ?? 'audio'; // Default to audio if not specified
       print("Data for call ended: $data");
       clearIncomingCall(chatId, callerId, type);
+      
+      // Cancel any active call notification
+      await NotificationService.instance.cancelCallNotification(chatId);
+      
       print('📞 Call ended/declined for chat $chatId');
     } catch (e) {
       print('❌ Error handling call ended: $e');
+    }
+  }
+
+  /// Handle call notification actions (accept/decline from notification)
+  void _handleCallAction(Map<String, dynamic> actionData) async {
+    try {
+      final action = actionData['action'];
+      final chatId = actionData['chatId'];
+      final callerId = actionData['callerId'];
+      final callType = actionData['callType'];
+      
+      print('📞 Call action received: $action for chat $chatId');
+      
+      // Cancel the notification
+      await NotificationService.instance.cancelCallNotification(chatId);
+      
+      if (action.toString().startsWith('decline_')) {
+        // User declined the call from notification
+        print('📞 Declining call from notification');
+        clearIncomingCall(chatId, callerId, callType);
+        WebSocketService().sendDeclineCall(chatId, callType);
+      } else if (action.toString().startsWith('accept_') || action == 'open') {
+        // User accepted the call from notification or tapped the notification
+        print('📞 Accepting call from notification');
+        
+        // Get chat details to show caller info
+        final chat = await getChatDetails(chatId);
+        
+        if (chat != null) {
+          final callData = {
+            'isGroup': false,
+            'partner': {
+              'username': chat.partner?.username ?? 'Unknown',
+              'avatar': chat.partner?.avatar ?? 'default_avatar.png',
+            },
+            'chatId': chatId,
+            'callerId': callerId,
+            'initiateCall': false,
+            'isJoining': true,
+          };
+          
+          // Navigate to the appropriate call screen
+          if (callType == 'audio') {
+            await routeTo("/receive-call-screen", data: callData);
+          } else {
+            await routeTo("/receive-video-call-screen", data: callData);
+          }
+        }
+      }
+    } catch (e) {
+      print('❌ Error handling call action: $e');
     }
   }
 

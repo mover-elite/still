@@ -33,9 +33,16 @@ class _ReceiveVideoCallScreenPageState
   late Animation<double> _scaleAnimation;
   bool _isRingtonePlaying = false;
   StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
+  String _callerName = 'Unknown'; // Store caller name
 
   @override
   get init => () {
+        // Extract caller name from navigation data
+        final navigationData = data();
+        if (navigationData != null && navigationData['partner'] != null) {
+          _callerName = navigationData['partner']['username'] ?? 'Unknown';
+        }
+        
         // Initialize animation controllers
         _pulseController = AnimationController(
           duration: const Duration(seconds: 2),
@@ -435,7 +442,7 @@ class _ReceiveVideoCallScreenPageState
                                     animation: _glowAnimation,
                                     builder: (context, child) {
                                       return Text(
-                                        'Demi3d',
+                                        _callerName,
                                         style: TextStyle(
                                           color: Colors.white,
                                           fontSize: 24,
