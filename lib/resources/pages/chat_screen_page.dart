@@ -1481,6 +1481,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
                                 "isGroup": _chat?.type == 'CHANNEL',
                                 "chatId": _chat?.id,
                                 "initiateCall": true,
+                                "avatar": _userImage,
                               }),
                               child: Container(
                                 width: 18,

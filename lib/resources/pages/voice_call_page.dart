@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/app/networking/chat_api_service.dart';
 import 'package:flutter_app/app/networking/websocket_service.dart';
+import 'package:flutter_app/app/services/chat_service.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'dart:async';
 import 'package:livekit_client/livekit_client.dart';
@@ -54,17 +55,10 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   int? _callerId; // ID of the caller (for incoming calls)
   bool _isJoining = false; // Flag to indicate if joining an incoming call
   // Group call data
-  String _groupName = "Our Loving Pets";
+  String _groupName = "";
   String _groupImage = "image9.png";
 
-  List<CallParticipant> _participants = [
-    CallParticipant(name: "You", image: "image6.png", isSelf: true),
-    CallParticipant(name: "Layla B", image: "image2.png"),
-    CallParticipant(name: "Layla B", image: "image2.png"),
-    CallParticipant(name: "Layla B", image: "image2.png"),
-    CallParticipant(name: "Layla B", image: "image2.png"),
-    CallParticipant(name: "Layla B", image: "image2.png"),
-  ];
+  List<CallParticipant> _participants = [];
 
   // Call timer
   Timer? _timer;
@@ -197,10 +191,53 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
     print(navigationData);
 
     if (navigationData != null) {
+      _isJoining = navigationData['isJoining'] ??
+            false; // Check if joining incoming call
+        final bool initiateCall = navigationData['initiateCall'] ?? false;
+      _chatId = navigationData['chatId'];
+
       if (navigationData['isGroup'] == true) {
         _callType = CallType.group;
-        _groupName = navigationData['groupName'] ?? _groupName;
-        _groupImage = navigationData['groupImage'] ?? _groupImage;
+        
+        
+
+        
+        final groupInfo = await ChatService().getChatDetails(_chatId!);
+        if(groupInfo != null){
+          // _groupImage = groupInfo.avatar ?? "image9.png";
+          _groupName = groupInfo.name;
+      }
+        
+        _groupImage = navigationData['avatar'] ?? _groupImage;
+        
+        print("_groupName: $_groupName, _groupImage: $_groupImage");
+        _callerId =
+            navigationData['callerId']; // Get caller ID for incoming calls
+          print("Navigation Data: $navigationData");
+          if (_isJoining) {
+          // For incoming calls, start directly in requesting state
+          setState(() {
+            _callState = CallState.requesting;
+
+          });
+          _startRequestingAnimations();
+
+          // Delay joining the existing call
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _joinCall();
+            }
+          });
+        } else if (initiateCall) {
+          // Delay call initiation until widget is fully mounted
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _startCall();
+            }
+          });
+        }
+
+        
         // _participants = (navigationData['participants'] as List)
         //     .map((p) => CallParticipant.fromJson(p))
         //     .toList();
@@ -214,9 +251,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         _chatId = navigationData['chatId'];
         _callerId =
             navigationData['callerId']; // Get caller ID for incoming calls
-        _isJoining = navigationData['isJoining'] ??
-            false; // Check if joining incoming call
-        final bool initiateCall = navigationData['initiateCall'] ?? false;
+        
 
         if (_isJoining) {
           // For incoming calls, start directly in requesting state
@@ -249,6 +284,42 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         }
       });
     }
+  }
+
+  /// ✅ Sync participants array with LiveKit remote participants
+  void _syncParticipants() {
+    if (_callType != CallType.group) {
+      return; // Only sync for group calls
+    }
+
+    List<CallParticipant> newParticipants = [];
+
+    // Add local participant (self)
+    final user = Auth.data();
+    if (user != null) {
+      newParticipants.add(CallParticipant(
+        name: "You",
+        image: user['avatar'] ?? "image6.png",
+        isSelf: true,
+      ));
+    }
+
+    // Add all remote participants from LiveKit
+    for (var remoteParticipant in _remoteParticipants) {
+      newParticipants.add(CallParticipant(
+        name: remoteParticipant.name,
+        image: "default_avatar.png", // You can extract from metadata if available
+        isSelf: false,
+      ));
+    }
+
+    if (mounted) {
+      setState(() {
+        _participants = newParticipants;
+      });
+    }
+
+    print("👥 Synced participants: ${_participants.length} total");
   }
 
   /// ✅ Start call with proper state flow: requesting → ringing → connected
@@ -314,7 +385,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         return;
       }
 
-      print("✅ Join call token received: ${response.callToken}");
+      
 
       // Initialize LiveKit room for joining
       final url = 'ws://217.77.4.167:7880';
@@ -413,7 +484,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         _room = null;
         _remoteParticipants.clear();
 
-        print("✅ Room cleanup completed");
+        
       } catch (e) {
         print("⚠️ Error during room cleanup: $e");
         // Force clear references even if cleanup fails
@@ -519,6 +590,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
               _callState = CallState.connected;
               _remoteParticipants.addAll(_room!.remoteParticipants.values);
             });
+            _syncParticipants(); // Sync UI participants with LiveKit participants
             _stopAllAnimations();
             _stopRingtone();
             _startTimer();
@@ -550,6 +622,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
             _callState = CallState.connected;
             _remoteParticipants.add(event.participant);
           });
+          _syncParticipants(); // Sync UI participants with LiveKit participants
           _stopAllAnimations();
           _stopRingtone();
           // Only start timer if not already started
@@ -569,6 +642,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
             _remoteParticipants
                 .removeWhere((p) => p.sid == event.participant.sid);
           });
+          _syncParticipants(); // Sync UI participants with LiveKit participants
 
           // If no remote participants, end the call
           if (_remoteParticipants.isEmpty &&
@@ -990,16 +1064,13 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
   Widget _buildGroupCallContent() {
     if (_callState == CallState.ringing) {
-      // Show main caller during ringing state
-      String mainCaller = "Fenta"; // This could be dynamic
-      String mainCallerImage = "image8.png";
-
+      // Show group name and image during ringing state
       return Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Group info at top
+          // Group name
           Text(
-            "Fenta, Layla B & Ahmad", // Dynamic group member names
+            _groupName,
             style: const TextStyle(
               color: Color(0xFFE8E7EA),
               fontSize: 18,
@@ -1009,8 +1080,9 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
           const SizedBox(height: 8),
 
+          // Call status
           Text(
-            "02:12:33", // Call duration or time
+            _getCallStatusText(),
             style: TextStyle(
               color: Colors.grey.shade400,
               fontSize: 14,
@@ -1019,7 +1091,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
           const SizedBox(height: 60),
 
-          // Main caller with pulsating animation
+          // Group image with pulsating animation
           AnimatedBuilder(
             animation: _pulseAnimation,
             builder: (context, child) {
@@ -1039,10 +1111,10 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
                     ],
                   ),
                   child: ClipOval(
-                    child: Image.asset(
-                      mainCallerImage,
+                    child: Image.network(
+                      _groupImage,
                       fit: BoxFit.cover,
-                    ).localAsset(),
+                    ),
                   ),
                 ),
               );
@@ -1051,14 +1123,16 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
           const SizedBox(height: 20),
 
-          Text(
-            mainCaller,
-            style: const TextStyle(
-              color: Color(0xFFE8E7EA),
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
+          // Participant count
+          if (_participants.isNotEmpty)
+            Text(
+              "${_participants.length} ${_participants.length == 1 ? 'participant' : 'participants'}",
+              style: const TextStyle(
+                color: Color(0xFFE8E7EA),
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
             ),
-          ),
 
           const SizedBox(height: 8),
 
@@ -1068,7 +1142,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
               return Opacity(
                 opacity: _fadeAnimation.value,
                 child: Text(
-                  "Ringing...",
+                  _isJoining ? "Joining..." : "Ringing...",
                   style: TextStyle(
                     color: Colors.grey.shade400,
                     fontSize: 16,
@@ -1078,17 +1152,23 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
             },
           ),
 
-          const SizedBox(height: 60),
+          const SizedBox(height: 40),
 
-          // Small participant avatars
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _buildSmallAvatar("image2.png", "Layla B"),
-              const SizedBox(width: 24),
-              _buildSmallAvatar("image6.png", "You", isSelf: true),
-            ],
-          ),
+          // Show participant avatars if available
+          if (_participants.isNotEmpty && _participants.length <= 4)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: _participants.take(4).map((participant) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: _buildSmallAvatar(
+                    participant.image,
+                    participant.name,
+                    isSelf: participant.isSelf,
+                  ),
+                );
+              }).toList(),
+            ),
         ],
       );
     } else {
@@ -1139,6 +1219,8 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   }
 
   Widget _buildSmallAvatar(String image, String name, {bool isSelf = false}) {
+    
+    
     return Column(
       children: [
         Container(

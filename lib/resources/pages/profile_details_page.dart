@@ -778,6 +778,7 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
                 "isGroup": navigationData?['isGroup'] ?? false,
                 "chatId": navigationData?['chatId'],
                 "initiateCall": true,
+                "avatar": _userImage,
               });
             },
           ),

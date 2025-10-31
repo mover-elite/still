@@ -131,8 +131,8 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
         final bool initiateCall = navigationData['initiateCall'] ?? false;
         await _ensurePermissions(); // Ensure permissions are handled
         if (_isJoining) {
-          // For incoming calls, start directly in ringing state
-          print("Is   JOINING");
+          
+          
           setState(() {
             _callState = CallState.requesting;
           });

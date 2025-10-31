@@ -39,8 +39,13 @@ class _ReceiveCallScreenPageState extends NyPage<ReceiveCallScreenPage>
   get init => () {
         // Extract caller name from navigation data
         final navigationData = data();
+        
         if (navigationData != null && navigationData['partner'] != null) {
+          if(navigationData['isGroup'] == true) {
+            _callerName = navigationData['name'] ?? 'Group Call';
+          } else {
           _callerName = navigationData['partner']['username'] ?? 'Unknown';
+          }
         }
         
         // Initialize animation controllers

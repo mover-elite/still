@@ -513,11 +513,14 @@ class ChatService {
 
       if (chat != null) {
         final callData = {
-          'isGroup': false,
+          'isGroup': chat.isGroup,
           'partner': {
             'username': chat.partner?.username ?? 'Unknown',
             'avatar': chat.partner?.avatar ?? 'default_avatar.png',
           },
+          "avatar": chat.avatar,
+          "name": chat.name,
+          "groupName": chat.name,
           'chatId': chatId,
           'callerId': callerId,
           'initiateCall': false, // This indicates joining, not initiating
