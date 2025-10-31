@@ -60,6 +60,10 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   GroupCreationResponse? _currentChannelInfo;
   bool _isAddingMembers = false;
   
+  // Channel type settings - persisted state
+  bool _channelIsPrivate = false;
+  bool _channelRestrictContent = false;
+  
   // Stream subscription for chat updates
   StreamSubscription<List<models.Chat>>? _chatListSubscription;
 
@@ -999,6 +1003,12 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   }
 
   void _showChannelTypeSettings(GroupCreationResponse channelInfo) {
+    // Initialize channel settings from the response
+    setState(() {
+      _channelIsPrivate = channelInfo.isPublic;
+      _channelRestrictContent = channelInfo.restrictContent ?? false;
+    });
+    
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -1008,9 +1018,6 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   }
 
   Widget _ChannelTypeScreen(GroupCreationResponse channelInfo) {
-    bool isPrivate = channelInfo.isPublic;
-    bool restrictContent = channelInfo.restrictContent ?? false;
-
     return StatefulBuilder(
       builder: (context, setModalState) {
         return Scaffold(
@@ -1062,8 +1069,8 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                         // Public option
                         GestureDetector(
                           onTap: () {
-                            setModalState(() {
-                              isPrivate = false;
+                            setState(() {
+                              _channelIsPrivate = false;
                             });
                           },
                           child: Container(
@@ -1076,13 +1083,13 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     border: Border.all(
-                                      color: !isPrivate
+                                      color: !_channelIsPrivate
                                           ? const Color(0xFF3498DB)
                                           : Colors.grey.shade600,
                                       width: 2,
                                     ),
                                   ),
-                                  child: !isPrivate
+                                  child: !_channelIsPrivate
                                       ? Container(
                                           margin: const EdgeInsets.all(4),
                                           decoration: const BoxDecoration(
@@ -1116,8 +1123,8 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                         // Private option
                         GestureDetector(
                           onTap: () {
-                            setModalState(() {
-                              isPrivate = true;
+                            setState(() {
+                              _channelIsPrivate = true;
                             });
                           },
                           child: Container(
@@ -1130,13 +1137,13 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     border: Border.all(
-                                      color: isPrivate
+                                      color: _channelIsPrivate
                                           ? const Color(0xFF3498DB)
                                           : Colors.grey.shade600,
                                       width: 2,
                                     ),
                                   ),
-                                  child: isPrivate
+                                  child: _channelIsPrivate
                                       ? Container(
                                           margin: const EdgeInsets.all(4),
                                           decoration: const BoxDecoration(
@@ -1163,7 +1170,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                     ),
                   ),
 
-                  if (isPrivate) ...[
+                  if (_channelIsPrivate) ...[
                     const SizedBox(height: 12),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -1332,10 +1339,10 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                             ),
                           ),
                           Switch(
-                            value: restrictContent,
+                            value: _channelRestrictContent,
                             onChanged: (value) {
-                              setModalState(() {
-                                restrictContent = value;
+                              setState(() {
+                                _channelRestrictContent = value;
                               });
                             },
                             activeThumbColor: const Color(0xFF3498DB),
