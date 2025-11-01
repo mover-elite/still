@@ -73,7 +73,7 @@ class ChatService {
       print("Gotten chat list with ${_chats.length} chats");
       
       // Emit initial chat list to stream so listeners get the data
-      _chatListController.add(_chats.values.toList());
+      _chatListController.add(_getSortedChatList());
       
       await WebSocketService().initializeConnection();
 
@@ -103,7 +103,7 @@ class ChatService {
     if (updatedChat != null) {
       _chats[chatId] = updatedChat;
       _chatController.add(updatedChat);
-      _chatListController.add(_chats.values.toList());
+      _chatListController.add(_getSortedChatList());
     }
       print('✅ Chat avatar updated successfully for chat $chatId');
     } catch (e) {
@@ -130,6 +130,19 @@ class ChatService {
     } catch (e) {
       return [];
     }
+  }
+
+  /// Get sorted chat list synchronously (helper method)
+  List<Chat> _getSortedChatList() {
+    final chats = _chats.values.toList();
+    chats.sort((a, b) {
+      final aTime =
+          a.lastMessage?.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bTime =
+          b.lastMessage?.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bTime.compareTo(aTime);
+    });
+    return chats;
   }
 
   /// Get chat details by ID
@@ -495,7 +508,7 @@ class ChatService {
 
       if (newChat != null) {
         _chats[newChat.id] = newChat;
-        _chatListController.add(_chats.values.toList());
+        _chatListController.add(_getSortedChatList());
       }
     } catch (e) {
       print('❌ Error handling new chat: $e');
@@ -718,7 +731,7 @@ class ChatService {
               }
 
               _chatController.add(chat);
-              _chatListController.add(_chats.values.toList());
+              _chatListController.add(_getSortedChatList());
             }
           }
         }
@@ -736,7 +749,7 @@ class ChatService {
         
         // Broadcast updated chat list
         _chatController.add(chat);
-        _chatListController.add(_chats.values.toList());
+        _chatListController.add(_getSortedChatList());
       }
 
       _messageController.add({
@@ -761,7 +774,7 @@ class ChatService {
         if (chat.partner?.id == userId) {
           chat.partner?.status =
               action == 'user:connected' ? "online" : "offline";
-          _chatListController.add(_chats.values.toList());
+          _chatListController.add(_getSortedChatList());
           break;
         }
       }
@@ -787,7 +800,7 @@ class ChatService {
     }
 
     _chatController.add(chat);
-    _chatListController.add(_chats.values.toList());
+    _chatListController.add(_getSortedChatList());
   }
 
   /// Clear chat cache and reset all user-specific data
