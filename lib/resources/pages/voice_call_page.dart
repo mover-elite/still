@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_app/app/networking/chat_api_service.dart';
 import 'package:flutter_app/app/services/chat_service.dart';
 import 'package:flutter_app/app/services/livekit_service.dart';
+import 'package:flutter_app/app/services/call_overlay_service.dart';
 import 'package:flutter_app/app/models/livekit_events.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'dart:async';
@@ -44,6 +45,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   
   CallType _callType = CallType.single;
   bool _isEndingCall = false;
+  bool _isMinimized = false; // Track if call is minimized
   
   // Call data
   String _contactName = "Layla B";
@@ -212,6 +214,12 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
           _callDuration = _liveKitService.callDuration;
           _isMuted = !_liveKitService.isMicrophoneEnabled;
         });
+        
+        // Update the overlay banner if it's showing
+        if (CallOverlayService().currentState != null) {
+          CallOverlayService().updateDuration(_formatDuration(_callDuration));
+          CallOverlayService().updateMuteState(_isMuted);
+        }
       }
     });
   }
@@ -485,10 +493,14 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
     }
     
     _isEndingCall = true;
+    _isMinimized = false; // Ensure this is not treated as a minimize
     print("📞 Starting call end process...");
     
     try {
       _stopAllAnimations();
+
+      // Hide the overlay banner if showing
+      CallOverlayService().hideCallBanner();
 
       // Disconnect via LiveKitService
       await _liveKitService.disconnect(reason: 'User ended call');
@@ -575,17 +587,29 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   }
 
   @override
-  @override
   void dispose() {
-    print("🧹 Disposing voice call page...");
+    print("🧹 Disposing voice call page... isMinimized: $_isMinimized");
     
-    // Set ending flag to prevent further processing
-    _isEndingCall = true;
-    
-    // Cancel LiveKitService event subscriptions
+    // Always cancel subscriptions to prevent memory leaks
     _connectionSubscription?.cancel();
     _participantSubscription?.cancel();
     _durationUpdateTimer?.cancel();
+    
+    // Only end the call if it wasn't minimized
+    if (!_isMinimized) {
+      print("📞 Call was ended (not minimized), disconnecting LiveKit");
+      _isEndingCall = true;
+      
+      // Hide the overlay banner
+      CallOverlayService().hideCallBanner();
+      
+      // Disconnect the call
+      _liveKitService.disconnect(reason: 'Page disposed - call ended');
+    } else {
+      print("📱 Call was minimized, keeping LiveKitService connected");
+      // Don't disconnect - the LiveKitService (singleton) keeps the call alive
+      // The overlay banner will continue showing updates
+    }
     
     // Cleanup animations and audio
     _stopAllAnimations();
@@ -598,25 +622,121 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
   @override
   Widget view(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Color(0xFF0F131B),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Status bar and header
-            _buildHeader(),
+    return WillPopScope(
+      onWillPop: () async {
+        // Don't allow back button to close the page
+        // Instead, minimize the call
+        _minimizeCall();
+        return false;
+      },
+      child: Scaffold(
+        backgroundColor: Color(0xFF0F131B),
+        body: SafeArea(
+          child: Column(
+            children: [
+              // Back button and header
+              _buildTopBar(),
+              
+              // Status bar and header
+              _buildHeader(),
 
-            // Main call content
-            Expanded(
-              child: _callType == CallType.single
-                  ? _buildSingleCallContent()
-                  : _buildGroupCallContent(),
-            ),
+              // Main call content
+              Expanded(
+                child: _callType == CallType.single
+                    ? _buildSingleCallContent()
+                    : _buildGroupCallContent(),
+              ),
 
-            // Control buttons
-            _buildControlButtons(),
-          ],
+              // Control buttons
+              _buildControlButtons(),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  /// Minimize the call and show banner at top
+  void _minimizeCall() {
+    print("📱 Minimizing call...");
+    print("   LiveKitService connected: ${_liveKitService.isConnected}");
+    print("   Chat ID: $_chatId");
+    print("   Contact Name: $_contactName");
+    print("   Group Name: $_groupName");
+    print("   Call Type: $_callType");
+    
+    if (_chatId == null) {
+      print("❌ Cannot minimize: chatId is null!");
+      return;
+    }
+    
+    _isMinimized = true;
+    
+    // Show the banner with current call info
+    final bannerName = _callType == CallType.single ? _contactName : _groupName;
+    final bannerImage = _callType == CallType.single ? _contactImage : _groupImage;
+    
+    print("   Showing banner for: $bannerName");
+    
+    CallOverlayService().showCallBanner(
+      name: bannerName,
+      image: bannerImage,
+      callType: _callType,
+      chatId: _chatId!,
+      duration: _formatDuration(_callDuration),
+      isMuted: _isMuted,
+    );
+    
+    print("   Banner shown, navigating back...");
+    
+    // Navigate back - the LiveKitService will keep the call alive
+    // The call is managed by LiveKitService (singleton), so it persists
+    Navigator.of(context).pop();
+  }
+
+  /// Build top bar with back button
+  Widget _buildTopBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(
+              Icons.arrow_back,
+              color: Colors.white,
+              size: 24,
+            ),
+            onPressed: _minimizeCall,
+          ),
+          const Spacer(),
+          // Encryption key indicator (like in the image)
+          if (_callState == CallState.connected)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.lock,
+                    color: Colors.white.withOpacity(0.9),
+                    size: 12,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Encryption key of this call',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

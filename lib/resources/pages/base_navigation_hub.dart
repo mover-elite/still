@@ -8,7 +8,9 @@ import '../widgets/calls_tab_widget.dart';
 import '../widgets/channels_tab_widget.dart';
 import '../widgets/chats_tab_widget.dart';
 import '../widgets/settings_tab_widget.dart';
+import '../widgets/call_overlay_banner.dart';
 import '../../app/services/chat_service.dart';
+import '../../app/services/call_overlay_service.dart';
 
 class BaseNavigationHub extends NyStatefulWidget with BottomNavPageControls {
   static RouteView path = ("/base", (_) => BaseNavigationHub());
@@ -49,6 +51,9 @@ class _BaseNavigationHubState extends NavigationHub<BaseNavigationHub> {
   @override
   void initState() {
     super.initState();
+    print("🎬 BaseNavigationHub initState");
+    print("   CallOverlayService current state: ${CallOverlayService().currentState?.name}");
+    
     // Load immediately
     _updateUnreadCount();
     
@@ -190,7 +195,32 @@ class _BaseNavigationHubState extends NavigationHub<BaseNavigationHub> {
     }
 
     return Scaffold(
-      body: body,
+      body: Stack(
+        children: [
+          // Main body content
+          body,
+          
+          // Call overlay banner (shown when call is minimized)
+          StreamBuilder<CallOverlayState?>(
+            stream: CallOverlayService().overlayStream,
+            builder: (context, snapshot) {
+              print("🔄 BaseNavigationHub StreamBuilder - hasData: ${snapshot.hasData}, data: ${snapshot.data?.name}");
+              final callState = snapshot.data;
+              if (callState != null) {
+                print("✅ Showing banner in BaseNavigationHub for: ${callState.name}");
+                return Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: CallOverlayBanner(callState: callState),
+                );
+              }
+              print("❌ Not showing banner in BaseNavigationHub - callState is null");
+              return const SizedBox.shrink();
+            },
+          ),
+        ],
+      ),
       extendBody: true, // Allow body to extend behind bottom nav
       bottomNavigationBar: Container(
         height: 90,
