@@ -579,12 +579,12 @@ class ChatService {
           print('📞 Call screen opened for: $callKey (tracking will be cleared on call end)');
         } else {
           // App is in background, show notification with actions
-          await NotificationService.instance.showIncomingCallNotification(
-            chatId: chatId,
-            callerId: callerId,
-            callerName: chat.partner?.username ?? 'Unknown',
-            callType: type,
-          );
+          // await NotificationService.instance.showIncomingCallNotification(
+          //   chatId: chatId,
+          //   callerId: callerId,
+          //   callerName: chat.partner?.username ?? 'Unknown',
+          //   callType: type,
+          // );
           print('📞 Call notification shown for: $callKey');
         }
         

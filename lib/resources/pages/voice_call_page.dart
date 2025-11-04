@@ -1,18 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/app/networking/chat_api_service.dart';
-import 'package:flutter_app/app/networking/websocket_service.dart';
 import 'package:flutter_app/app/services/chat_service.dart';
+import 'package:flutter_app/app/services/livekit_service.dart';
+import 'package:flutter_app/app/models/livekit_events.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'dart:async';
-import 'package:livekit_client/livekit_client.dart';
 import 'package:audioplayers/audioplayers.dart';
 
 // ✅ Call states for tracking call progress
 enum CallState { requesting, ringing, connected }
-
-// ✅ Call types supported
-enum CallType { single, group }
 
 // ✅ Participant data model
 class CallParticipant {
@@ -35,44 +32,35 @@ class VoiceCallPage extends NyStatefulWidget {
 
 class _VoiceCallPageState extends NyPage<VoiceCallPage>
     with TickerProviderStateMixin {
-  CallState _callState = CallState.requesting; // ✅ Start with requesting state
+  // LiveKitService instance
+  final LiveKitService _liveKitService = LiveKitService();
+  
+  CallState _callState = CallState.requesting;
   bool _isMuted = false;
   bool _isSpeaker = false;
   bool _isVideoOn = false;
-  int _callDuration = 0; // ✅ Track call duration in seconds
+  int _callDuration = 0;
   AudioPlayer? _audioPlayer;
-  // Call data - you can pass this as parameters
-  CallType _callType =
-      CallType.single; // Change to CallType.group for group calls
-
-  StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
-  bool _isEndingCall = false; // Flag to prevent duplicate end call processing
-  // Single call data
+  
+  CallType _callType = CallType.single;
+  bool _isEndingCall = false;
+  
+  // Call data
   String _contactName = "Layla B";
   String? _contactImage;
   String defaultImage = "image2.png";
-  int? _chatId; // Example chat ID
-  int? _callerId; // ID of the caller (for incoming calls)
-  bool _isJoining = false; // Flag to indicate if joining an incoming call
-  // Group call data
+  int? _chatId;
+  int? _callerId;
+  bool _isJoining = false;
   String _groupName = "";
   String _groupImage = "image9.png";
 
   List<CallParticipant> _participants = [];
 
-  // Call timer
-  Timer? _timer;
-
-  // ✅ LiveKit integration
-  Room? _room;
-  List<RemoteParticipant> _remoteParticipants = [];
-  EventsListener<RoomEvent>? _listener;
-  bool _isConnecting = false; // Prevent simultaneous connection attempts
-
-  // ✅ Room information preservation
-  Map<String, dynamic> _roomInfo = {}; // Store room info for post-call access
-  List<Map<String, dynamic>> _participantHistory =
-      []; // Track all participants who joined
+  // Event subscriptions from LiveKitService
+  StreamSubscription<ConnectionStateEvent>? _connectionSubscription;
+  StreamSubscription<ParticipantChangeEvent>? _participantSubscription;
+  Timer? _durationUpdateTimer;
 
   // Animation controllers
   late AnimationController _pulseController;
@@ -116,13 +104,11 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
           _fadeController.repeat(reverse: true);
         }
 
+        // Setup LiveKitService event listeners
+        _setupLiveKitListeners();
+
         // Then extract call data and potentially start the call
         _extractCallData();
-
-        _notificationSubscription =
-            WebSocketService().notificationStream.listen((notificationData) {
-          _handleIncomingNotification(notificationData);
-        });
       };
 
     Future<void> _playRingtone() async {
@@ -148,42 +134,86 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
     
   }
 
-  Future<void> _handleIncomingNotification(
-      Map<String, dynamic> notificationData) async {
-    // Guard: Don't process if already disposed or not mounted
-    if (!mounted) {
-      print("⚠️ Notification received but widget not mounted, ignoring");
-      return;
-    }
+  /// Setup LiveKitService event listeners
+  void _setupLiveKitListeners() {
+    // Listen to connection events
+    _connectionSubscription = _liveKitService.connectionEvents.listen((event) {
+      if (!mounted) return;
 
-    // Guard: Don't process if call is already ending
-    if (_isEndingCall) {
-      print("⚠️ Notification received but call already ending, ignoring");
-      return;
-    }
+      switch (event.type) {
+        case ConnectionStateType.connected:
+          print('✅ Connected to LiveKit room');
+          // Check if there are already participants
+          if (_liveKitService.remoteParticipants.isNotEmpty) {
+            print('👥 Found existing participants, joining active call');
+            setState(() {
+              _callState = CallState.connected;
+            });
+            _syncParticipants();
+            _stopAllAnimations();
+            _stopRingtone();
+          } else {
+            print('📞 Room connected, waiting for other participants...');
+            setState(() {
+              _callState = CallState.ringing;
+            });
+            _startRingingAnimations();
+          }
+          break;
 
-    // Guard: Don't process if room is already null
-    if (_room == null) {
-      print("⚠️ Notification received but room already disposed, ignoring");
-      return;
-    }
+        case ConnectionStateType.disconnected:
+          print('❌ Disconnected from room: ${event.disconnectReason}');
+          if (!_isEndingCall && mounted) {
+            Navigator.pop(context);
+          }
+          break;
 
-    print("Received notification: $notificationData");
-    final action = notificationData['action'];
-    final notificationChatId = notificationData['chatId'];
-    final notificationType = notificationData['type'];
-    
-    // Only process if it's for THIS call and matches the call type
-    if ((action == 'call:declined' || action == 'call:ended') && 
-        _callType == CallType.single && 
-        notificationChatId == _chatId &&
-        notificationType == 'audio') {
-      print("📞 Processing call $action notification for chat $_chatId");
-      
-      // Don't send decline notification since we received one
-      // _endCall will set _isEndingCall flag and cancel subscription
-      await _endCall(sendDeclineNotification: false);
-    }
+        case ConnectionStateType.reconnecting:
+          print('🔄 Room reconnecting...');
+          break;
+
+        case ConnectionStateType.reconnected:
+          print('✅ Room reconnected');
+          break;
+      }
+    });
+
+    // Listen to participant events
+    _participantSubscription = _liveKitService.participantEvents.listen((event) {
+      if (!mounted) return;
+
+      switch (event.type) {
+        case ParticipantChangeType.connected:
+          print('👤 Participant connected: ${event.participant.name}');
+          setState(() {
+            _callState = CallState.connected;
+          });
+          _syncParticipants();
+          _stopAllAnimations();
+          _stopRingtone();
+          break;
+
+        case ParticipantChangeType.disconnected:
+          print('👤 Participant disconnected: ${event.participant.name}');
+          _syncParticipants();
+          
+          // If no remote participants, end the call
+          if (_liveKitService.remoteParticipants.isEmpty && _callState == CallState.connected) {
+            _endCall();
+          }
+          break;
+      }
+    });
+
+    // Update call duration periodically
+    _durationUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && _liveKitService.isConnected) {
+        setState(() {
+          _callDuration = _liveKitService.callDuration;
+          _isMuted = !_liveKitService.isMicrophoneEnabled;
+        });
+      }
+    });
   }
 
   void _extractCallData() async {
@@ -304,11 +334,11 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       ));
     }
 
-    // Add all remote participants from LiveKit
-    for (var remoteParticipant in _remoteParticipants) {
+    // Add all remote participants from LiveKitService
+    for (var remoteParticipant in _liveKitService.remoteParticipants) {
       newParticipants.add(CallParticipant(
         name: remoteParticipant.name,
-        image: "default_avatar.png", // You can extract from metadata if available
+        image: "default_avatar.png",
         isSelf: false,
       ));
     }
@@ -356,9 +386,12 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       });
       _startRingingAnimations();
 
-      // Initialize LiveKit room
-      final url = 'ws://217.77.4.167:7880';
-      await _initializeLiveKitRoom(response.callToken, url);
+      await _liveKitService.connect(        
+        token: response.callToken,
+        callType: _callType,
+        chatId: _chatId!,
+        enableAudio: true,
+      );
     } catch (e) {
       print("❌ Error starting call: $e");
       _showErrorDialog("Failed to start call: $e");
@@ -385,11 +418,12 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         return;
       }
 
-      
-
-      // Initialize LiveKit room for joining
-      final url = 'ws://217.77.4.167:7880';
-      await _initializeLiveKitRoom(response.callToken, url);
+      await _liveKitService.connect(        
+        token: response.callToken,
+        callType: _callType,
+        chatId: _chatId!,
+        enableAudio: true,
+      );
     } catch (e) {
       print("❌ Error joining call: $e");
       _showErrorDialog("Failed to join call: $e");
@@ -421,275 +455,9 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
    
   }
 
-  Future<void> _initializeLiveKitRoom(String token, String url) async {
-    // Prevent simultaneous connection attempts
-    if (_isConnecting) {
-      print("⚠️ Connection attempt already in progress, skipping...");
-      return;
-    }
 
-    try {
-      _isConnecting = true;
-      print("🔄 Setting up LiveKit room...");
-      print("Current room  ${_room}");
-      print("Current room remote: ${_room?.remoteParticipants}");
-      print("Current room local: ${_room?.localParticipant}");
-      // Ensure complete cleanup of any existing room connection
-      await _ensureRoomCleanup();
 
-      // Create fresh room instance
-      _room = Room();
 
-      // Setup event listeners
-      _setupRoomListeners();
-
-      // Connect to room
-      await _room!.connect(
-        url,
-        token,
-        connectOptions: const ConnectOptions(
-          autoSubscribe: true,
-        ),
-      );
-
-      print("✅ LiveKit room setup completed, waiting for participants...");
-
-      // Enable audio by default
-      await _room!.localParticipant?.setMicrophoneEnabled(true);
-    } catch (e) {
-      print("❌ Error setting up LiveKit room: $e");
-      _showErrorDialog("Failed to setup call room: $e");
-    } finally {
-      _isConnecting = false;
-    }
-  }
-
-  /// ✅ Ensure complete cleanup of any existing room connection
-  Future<void> _ensureRoomCleanup() async {
-    if (_room != null) {
-      print("🧹 Cleaning up existing room connection...");
-
-      try {
-        // Stop listening to events first
-        _listener?.cancelAll();
-        _listener?.dispose();
-
-        _listener = null;
-
-        // Disconnect and dispose room
-        await _room!.disconnect();
-        await _room!.dispose();
-
-        // Clear references
-        _room = null;
-        _remoteParticipants.clear();
-
-        
-      } catch (e) {
-        print("⚠️ Error during room cleanup: $e");
-        // Force clear references even if cleanup fails
-        _room = null;
-        _listener = null;
-        _remoteParticipants.clear();
-      }
-    }
-
-    // Reset connection flag
-    _isConnecting = false;
-  }
-
-  /// ✅ Capture room information when connected
-  void _captureRoomInfo() {
-    if (_room != null) {
-      _roomInfo = {
-        'roomName': _room!.name,
-        'connectedAt': DateTime.now().toIso8601String(),
-        'localParticipant': {
-          'name': _room!.localParticipant?.name ?? 'Unknown',
-          'sid': _room!.localParticipant?.sid ?? 'Unknown',
-          'identity': _room!.localParticipant?.identity ?? 'Unknown',
-        },
-        'remoteParticipantCount': _room!.remoteParticipants.length,
-        'chatId': _chatId,
-        'callerId': _callerId,
-        'isJoining': _isJoining,
-      };
-
-      print('📊 Room info captured: $_roomInfo');
-    }
-  }
-
-  /// ✅ Capture disconnection information
-  void _captureDisconnectionInfo(String reason) {
-    _roomInfo['disconnectedAt'] = DateTime.now().toIso8601String();
-    _roomInfo['disconnectionReason'] = reason;
-    _roomInfo['callDuration'] = _callDuration;
-    _roomInfo['participantHistory'] = List.from(_participantHistory);
-
-    print('📊 Final room info: $_roomInfo');
-
-    // You can save this to local storage, send to analytics, etc.
-    _saveRoomInfoToAnalytics();
-  }
-
-  /// ✅ Add participant to history tracking
-  void _addParticipantToHistory(Participant participant, String action) {
-    final participantInfo = {
-      'name': participant.name.isEmpty ? 'Unknown' : participant.name,
-      'sid': participant.sid,
-      'identity': participant.identity,
-      'action': action, // 'joined' or 'left'
-      'timestamp': DateTime.now().toIso8601String(),
-    };
-
-    _participantHistory.add(participantInfo);
-    print('👤 Participant $action: ${participant.name}');
-  }
-
-  /// ✅ Save room information for analytics or debugging
-  void _saveRoomInfoToAnalytics() {
-    // Example: Save to local storage, send to server, etc.
-    print('💾 Saving room analytics data...');
-    print('Call Summary:');
-    print('  Duration: ${_formatDuration(_callDuration)}');
-    print('  Participants: ${_participantHistory.length}');
-    print('  Disconnection reason: ${_roomInfo['disconnectionReason']}');
-
-    // You could implement:
-    // - Local storage save
-    // - API call to save call history
-    // - Analytics tracking
-  }
-
-  /// ✅ Get room information (accessible even after call ends)
-  Map<String, dynamic> getRoomInfo() {
-    return Map.from(_roomInfo);
-  }
-
-  /// ✅ Get participant history (accessible even after call ends)
-  List<Map<String, dynamic>> getParticipantHistory() {
-    return List.from(_participantHistory);
-  }
-
-  /// ✅ Setup LiveKit room event listeners
-  void _setupRoomListeners() {
-    _listener = _room!.createListener();
-
-    _listener!
-      ..on<RoomConnectedEvent>((event) {
-        print('✅ Connected to LiveKit room');
-
-        // Capture room information when connected
-        _captureRoomInfo();
-
-        // Check if there are already participants in the room (for joiners)
-        if (_room != null && _room!.remoteParticipants.isNotEmpty) {
-          print('👥 Found existing participants, joining active call');
-          if (mounted) {
-            setState(() {
-              _callState = CallState.connected;
-              _remoteParticipants.addAll(_room!.remoteParticipants.values);
-            });
-            _syncParticipants(); // Sync UI participants with LiveKit participants
-            _stopAllAnimations();
-            _stopRingtone();
-            _startTimer();
-          }
-        } else {
-          print('📞 Room connected, waiting for other participants...');
-          // Stay in ringing state until another participant joins
-        }
-      })
-      ..on<RoomDisconnectedEvent>((event) {
-        print('❌ Disconnected from room: ${event.reason}');
-
-        // Capture final room state before cleanup
-        _captureDisconnectionInfo(event.reason?.toString() ?? 'Unknown');
-
-        if (mounted) {
-          Navigator.pop(context);
-        }
-      })
-      ..on<ParticipantConnectedEvent>((event) {
-        print('👤 Participant connected: ${event.participant.name}');
-
-        // Track participant joining
-        _addParticipantToHistory(event.participant, 'joined');
-
-        // ✅ State 3: Connected - Other party joined the call
-        if (mounted) {
-          setState(() {
-            _callState = CallState.connected;
-            _remoteParticipants.add(event.participant);
-          });
-          _syncParticipants(); // Sync UI participants with LiveKit participants
-          _stopAllAnimations();
-          _stopRingtone();
-          // Only start timer if not already started
-          if (_timer == null) {
-            _startTimer();
-          }
-        }
-      })
-      ..on<ParticipantDisconnectedEvent>((event) {
-        print('👤 Participant disconnected: ${event.participant.name}');
-
-        // Track participant leaving
-        _addParticipantToHistory(event.participant, 'left');
-
-        if (mounted) {
-          setState(() {
-            _remoteParticipants
-                .removeWhere((p) => p.sid == event.participant.sid);
-          });
-          _syncParticipants(); // Sync UI participants with LiveKit participants
-
-          // If no remote participants, end the call
-          if (_remoteParticipants.isEmpty &&
-              _callState == CallState.connected) {
-            _endCall();
-          }
-        }
-      })
-      ..on<TrackMutedEvent>((event) {
-        print('🔇 Track muted: ${event.publication.kind}');
-        if (mounted && event.participant is LocalParticipant) {
-          setState(() {
-            _isMuted = !_room!.localParticipant!.isMicrophoneEnabled();
-          });
-        }
-      })
-      ..on<TrackUnmutedEvent>((event) {
-        print('🔊 Track unmuted: ${event.publication.kind}');
-        if (mounted && event.participant is LocalParticipant) {
-          setState(() {
-            _isMuted = !_room!.localParticipant!.isMicrophoneEnabled();
-          });
-        }
-      });
-  }
-
-  /// ✅ Start call duration timer
-  void _startTimer() {
-    // Prevent starting multiple timers
-    if (_timer != null) {
-      return;
-    }
-
-    _timer = Timer.periodic(Duration(seconds: 1), (timer) {
-      if (mounted) {
-        setState(() {
-          _callDuration++;
-        });
-      }
-    });
-  }
-
-  /// ✅ Stop and cleanup timer
-  void _stopTimer() {
-    _timer?.cancel();
-    _timer = null;
-  }
 
   /// ✅ Format call duration for display
   String _formatDuration(int seconds) {
@@ -700,21 +468,16 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
   /// ✅ Mute/unmute microphone
   Future<void> _toggleMute() async {
-    if (_room?.localParticipant != null) {
-      final enabled = _room!.localParticipant!.isMicrophoneEnabled();
-      await _room!.localParticipant!.setMicrophoneEnabled(!enabled);
-      if (mounted) {
-        setState(() {
-          _isMuted = !enabled;
-        });
-      }
+    await _liveKitService.toggleMicrophone();
+    if (mounted) {
+      setState(() {
+        _isMuted = !_liveKitService.isMicrophoneEnabled;
+      });
     }
   }
 
   /// ✅ End the call and navigate back
-  /// [sendDeclineNotification] - if true, sends decline notification to other party
-  /// Set to false when ending due to receiving a decline notification
-  Future<void> _endCall({bool sendDeclineNotification = true}) async {
+  Future<void> _endCall() async {
     // Guard: Prevent duplicate end call processing
     if (_isEndingCall) {
       print("⚠️ _endCall already in progress, skipping duplicate call");
@@ -725,32 +488,10 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
     print("📞 Starting call end process...");
     
     try {
-      // Cancel notification subscription immediately
-      await _notificationSubscription?.cancel();
-      _notificationSubscription = null;
-      
-      _stopTimer();
       _stopAllAnimations();
 
-      // Capture final room state before cleanup
-      if (_room != null) {
-        _captureDisconnectionInfo('User ended call');
-      }
-
-      // Use our comprehensive cleanup method
-      await _ensureRoomCleanup();
-
-      // Example: Show call summary before leaving
-      _showCallSummary();
-
-      // Send decline notification only if this user initiated the end
-      // Don't send if we're ending because we received a decline notification
-      if (_chatId != null && sendDeclineNotification) {
-        print("📞 Sending decline notification to other party");
-        WebSocketService().sendDeclineCall(_chatId!, "audio");
-      } else if (!sendDeclineNotification) {
-        print("📞 Not sending decline notification (received from other party)");
-      }
+      // Disconnect via LiveKitService
+      await _liveKitService.disconnect(reason: 'User ended call');
       
       // Safely pop the navigator
       if (mounted && Navigator.canPop(context)) {
@@ -769,19 +510,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
     }
   }
 
-  /// ✅ Show call summary with preserved room information
-  void _showCallSummary() {
-    final duration = _formatDuration(_callDuration);
-    final participantCount = _participantHistory.length;
 
-    print('📞 Call Summary:');
-    print('   Duration: $duration');
-    print('   Participants: $participantCount');
-    print('   Room Info: $_roomInfo');
-    print('   Participant History: $_participantHistory');
-
-    // You can show this in a dialog, save to database, etc.
-  }
 
   /// ✅ Show error dialog and navigate back
   void _showErrorDialog(String message) {
@@ -846,27 +575,21 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   }
 
   @override
+  @override
   void dispose() {
     print("🧹 Disposing voice call page...");
     
     // Set ending flag to prevent further processing
     _isEndingCall = true;
     
-    // Cancel notification subscription first
-    _notificationSubscription?.cancel();
-    _notificationSubscription = null;
+    // Cancel LiveKitService event subscriptions
+    _connectionSubscription?.cancel();
+    _participantSubscription?.cancel();
+    _durationUpdateTimer?.cancel();
     
-    // Ensure proper cleanup on widget disposal
-    _stopTimer();
+    // Cleanup animations and audio
     _stopAllAnimations();
     _audioPlayer?.dispose();
-    
-    // Clean up room connection asynchronously
-    _ensureRoomCleanup().then((_) {
-      print("🧹 Widget disposal cleanup completed");
-    }).catchError((e) {
-      print("⚠️ Error during widget disposal cleanup: $e");
-    });
     
     _pulseController.dispose();
     _fadeController.dispose();
