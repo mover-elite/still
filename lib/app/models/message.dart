@@ -14,6 +14,12 @@ class Message {
   final DateTime updatedAt;
   final Sender sender;
 
+
+  final String? callId;
+  final int? duration;
+  final String? callStatus;
+
+
   final bool isSent; // Deprecated, use isRead
   bool isDelivered;
   bool isRead;
@@ -33,6 +39,10 @@ class Message {
     required this.isAudio,
     required this.statuses,
     required this.isSent,
+    
+    this.callId,
+    this.duration,
+    this.callStatus,
     this.referenceId,
     this.text,
     this.caption,
@@ -61,6 +71,11 @@ class Message {
       statuses: (json['statuses'] as List)
           .map((status) => MessageStatus.fromJson(status))
           .toList(),
+      
+      callId: json['callId'],
+      duration: json['duration'],
+      callStatus: json['callStatus'],
+
       isSent: json['isSent'] ?? true,
       audioDuration: json['audioDuration'],
       isRead: json['isRead'] ?? false,
@@ -91,6 +106,9 @@ class Message {
       'statuses': statuses.map((status) => status.toJson()).toList(),
       'tempImagePath': tempImagePath,
       'tempVideoPath': tempVideoPath,
+      'callId': callId,
+      'duration': duration,
+      'status': callStatus,
     };
   }
 }

@@ -108,12 +108,13 @@ class ChatApiService extends ApiService {
   }
 
 
-  Future<CallResponse?> joinVoiceCall(int chatId) async {
+  Future<CallResponse?> joinVoiceCall(int chatId, String callId) async {
     return await network<CallResponse>(
       request: (request) => request.post(
         "/call/voice-call/join",
         data: {
           "chatId": chatId,
+          "callId": callId,
         },
       ),
     );

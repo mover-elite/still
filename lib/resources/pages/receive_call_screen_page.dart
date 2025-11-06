@@ -200,7 +200,8 @@ class _ReceiveCallScreenPageState extends NyPage<ReceiveCallScreenPage>
       if (navigationData != null) {
         final chatId = navigationData['chatId'];
         final callerId = navigationData['callerId'];
-        ChatService().clearIncomingCall(chatId, callerId, 'audio');
+        final callId = navigationData['callId'];
+        ChatService().clearIncomingCall(chatId, callId);
       }
     } catch (e) {
       print('Could not clear call tracking in dispose: $e');
@@ -224,7 +225,8 @@ class _ReceiveCallScreenPageState extends NyPage<ReceiveCallScreenPage>
     // Clear call tracking when accepting
     final chatId = navigationData['chatId'];
     final callerId = navigationData['callerId'];
-    ChatService().clearIncomingCall(chatId, callerId, 'audio');
+    final callId = navigationData['callId'];
+    ChatService().clearIncomingCall(chatId, callId);
     
     Navigator.pop(context);
     await routeTo(
@@ -245,10 +247,10 @@ class _ReceiveCallScreenPageState extends NyPage<ReceiveCallScreenPage>
     final navigationData = data();
     final chatID = navigationData['chatId'];
     final callerId = navigationData['callerId'];
-    
+    final callId = navigationData['callId'];
     // Clear call tracking when declining
-    ChatService().clearIncomingCall(chatID, callerId, 'audio');
-    
+    ChatService().clearIncomingCall(chatID, callId);
+
     WebSocketService().sendDeclineCall(chatID, "audio");
     Navigator.pop(context);
   }
@@ -279,8 +281,9 @@ class _ReceiveCallScreenPageState extends NyPage<ReceiveCallScreenPage>
         
         // Clear call tracking
         final callerId = navigationData['callerId'];
-        ChatService().clearIncomingCall(currentChatId, callerId, 'audio');
-        
+        final callId = navigationData['callId'];
+        ChatService().clearIncomingCall(currentChatId, callId);
+
         // Close the screen
         if (mounted && Navigator.canPop(context)) {
           Navigator.pop(context);

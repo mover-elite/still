@@ -17,6 +17,30 @@ class CallOverlayService {
   final LiveKitService _liveKitService = LiveKitService();
 
   CallOverlayState? get currentState => _currentState;
+  
+  /// Get call data from LiveKitService for returning to call
+  Map<String, dynamic>? getCallDataFromLiveKit() {
+    print('🔍 getCallDataFromLiveKit called');
+    print('   Has active call: ${_liveKitService.hasActiveCall}');
+    print('   Is connected: ${_liveKitService.isConnected}');
+    print('   Chat ID: ${_liveKitService.currentChatId}');
+    print('   Call Type: ${_liveKitService.currentCallType}');
+    print('   Call Data: ${_liveKitService.currentCallData}');
+    
+    if (!_liveKitService.hasActiveCall) {
+      print('❌ No active call - returning null');
+      return null;
+    }
+    
+    final data = {
+      'chatId': _liveKitService.currentChatId,
+      'callType': _liveKitService.currentCallType,
+      'callData': _liveKitService.currentCallData,
+    };
+    
+    print('✅ Returning call data: $data');
+    return data;
+  }
 
   /// Show the minimized call banner
   void showCallBanner({
@@ -40,16 +64,18 @@ class CallOverlayService {
       chatId: chatId,
       duration: duration,
       isMuted: isMuted,
+      callStatus: _liveKitService.callStatus,
     );
     
     print("   Current state created, adding to stream...");
     _overlayController.add(_currentState);
     print("   State added to stream. Has listeners: ${_overlayController.hasListener}");
     
-    // Start timer to update duration from LiveKitService
+    // Start timer to update duration and status from LiveKitService
     _updateTimer?.cancel();
     _updateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_currentState != null && _liveKitService.isConnected) {
+        // Get updated duration and status from LiveKitService
         final duration = _liveKitService.callDuration;
         final minutes = (duration / 60).floor();
         final seconds = duration % 60;
@@ -62,12 +88,13 @@ class CallOverlayService {
           chatId: _currentState!.chatId,
           duration: formattedDuration,
           isMuted: !_liveKitService.isMicrophoneEnabled,
+          callStatus: _liveKitService.callStatus,
         );
         _overlayController.add(_currentState);
       }
     });
     
-    print("   Timer started for updates");
+    print("   Timer started for updates from LiveKitService");
   }
 
   /// Update the call duration
@@ -80,6 +107,7 @@ class CallOverlayService {
         chatId: _currentState!.chatId,
         duration: duration,
         isMuted: _currentState!.isMuted,
+        callStatus: _liveKitService.callStatus,
       );
       _overlayController.add(_currentState);
     }
@@ -95,6 +123,7 @@ class CallOverlayService {
         chatId: _currentState!.chatId,
         duration: _currentState!.duration,
         isMuted: isMuted,
+        callStatus: _liveKitService.callStatus,
       );
       _overlayController.add(_currentState);
     }
@@ -122,6 +151,7 @@ class CallOverlayState {
   final int chatId;
   final String duration;
   final bool isMuted;
+  final CallStatus callStatus;
 
   CallOverlayState({
     required this.name,
@@ -130,5 +160,6 @@ class CallOverlayState {
     required this.chatId,
     required this.duration,
     required this.isMuted,
+    required this.callStatus,
   });
 }

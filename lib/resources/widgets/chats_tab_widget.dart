@@ -1229,12 +1229,109 @@ class _ChatsTabState extends NyState<ChatsTab> {
     );
   }
 
+  /// Get message preview text with appropriate icon for message type
+  Map<String, dynamic> _getMessagePreview(Message? lastMessage) {
+    if (lastMessage == null) {
+      return {'icon': null, 'text': ''};
+    }
+
+    IconData? icon;
+    String text;
+
+    switch (lastMessage.type) {
+      case 'PHOTO':
+      case 'IMAGE':
+        icon = Icons.photo;
+        text = lastMessage.caption?.isNotEmpty == true 
+            ? lastMessage.caption! 
+            : 'Photo';
+        break;
+      
+      case 'VIDEO':
+        icon = Icons.videocam;
+        text = lastMessage.caption?.isNotEmpty == true 
+            ? lastMessage.caption! 
+            : 'Video';
+        break;
+      
+      case 'AUDIO':
+      case 'VOICE':
+      case 'VOICE_NOTE':
+        icon = Icons.mic;
+        text = 'Voice message';
+        break;
+      
+      case 'DOCUMENT':
+      case 'FILE':
+        icon = Icons.insert_drive_file;
+        text = lastMessage.caption?.isNotEmpty == true 
+            ? lastMessage.caption! 
+            : 'Document';
+        break;
+      
+      case 'VOICE_CALL':
+        icon = Icons.phone;
+        text = _getCallStatusText(lastMessage, isVoiceCall: true);
+        break;
+      
+      case 'VIDEO_CALL':
+        icon = Icons.videocam;
+        text = _getCallStatusText(lastMessage, isVoiceCall: false);
+        break;
+      
+      case 'TEXT':
+      default:
+        icon = null;
+        text = lastMessage.text ?? lastMessage.caption ?? '';
+        break;
+    }
+
+    return {'icon': icon, 'text': text};
+  }
+
+  /// Get call status text for chat preview
+  String _getCallStatusText(Message message, {required bool isVoiceCall}) {
+    final callStatus = message.callStatus ?? 'UNKNOWN';
+    final isSentByMe = message.senderId == _currentUserId;
+    
+    switch (callStatus) {
+      case 'MISSED':
+        return isSentByMe ? 'Cancelled call' : 'Missed call';
+      case 'DECLINED':
+        return isSentByMe ? 'Call declined' : 'Declined call';
+      case 'FAILED':
+        return 'Call failed';
+      case 'ENDED':
+        if (message.duration != null && message.duration! > 0) {
+          return 'Call • ${_formatCallDuration(message.duration!)}';
+        }
+        return isSentByMe ? 'Outgoing call' : 'Incoming call';
+      case 'ONGOING':
+        return 'Call in progress';
+      case 'INITIALIZED':
+      default:
+        return isVoiceCall ? 'Voice call' : 'Video call';
+    }
+  }
+
+  /// Format call duration for preview
+  String _formatCallDuration(int seconds) {
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    if (minutes > 0) {
+      return '${minutes}m ${secs}s';
+    }
+    return '${secs}s';
+  }
+
   Widget _buildChatItem({
     required Chat chat,
     bool isLastItem = false, // To control whether to show line demarcation
   }) {
     final name = chat.name;
-    final message = chat.lastMessage?.text ?? chat.lastMessage?.caption ?? '';
+    final messagePreview = _getMessagePreview(chat.lastMessage);
+    final message = messagePreview['text'] as String;
+    final messageIcon = messagePreview['icon'] as IconData?;
     final time = formatMessageTime(chat.lastMessage?.createdAt) ?? '';
     final isTyping = chat.typingUsers.isNotEmpty;
 
@@ -1381,6 +1478,15 @@ class _ChatsTabState extends NyState<ChatsTab> {
                                   : Colors.grey.shade500,
                             ),
                           if (chat.lastMessage != null) SizedBox(width: 4),
+                          // Show message type icon
+                          if (messageIcon != null && !isTyping) ...[
+                            Icon(
+                              messageIcon,
+                              size: 16,
+                              color: Colors.grey.shade500,
+                            ),
+                            SizedBox(width: 4),
+                          ],
                           Expanded(
                             child: Text(
                               isTyping && typingMessage != null
@@ -1464,7 +1570,7 @@ class _ChatsTabState extends NyState<ChatsTab> {
       backgroundColor: const Color(0xFF0F131B),
       appBar: PreferredSize(
         preferredSize:
-            const Size.fromHeight(140), // Increased height for search bar
+            const Size.fromHeight(110), // Reduced height for compact header
         child: ClipRRect(
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
@@ -1477,12 +1583,12 @@ class _ChatsTabState extends NyState<ChatsTab> {
                   children: [
                     // Top row with logo, title, and action buttons
                     Container(
-                      height: 60,
+                      height: 44,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Column(
                         children: [
                           SizedBox(
-                            height: 10,
+                            height: 4,
                           ),
                           // Top row - Logo centered
                           // Container(
@@ -1501,7 +1607,7 @@ class _ChatsTabState extends NyState<ChatsTab> {
 
                           // Bottom row - Edit, Chats, Icons
                           Container(
-                            height: 30,
+                            height: 28,
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
@@ -1594,11 +1700,11 @@ class _ChatsTabState extends NyState<ChatsTab> {
                     ),
                     // Search bar
                     SizedBox(
-                      height: 10,
+                      height: 4,
                     ),
                     Container(
-                      height: 65,
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                      height: 54,
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                       child: Container(
                         decoration: BoxDecoration(
                           color: const Color(0xFF0F131B),

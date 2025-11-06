@@ -9,6 +9,7 @@ enum ConnectionStateType {
   disconnected,
   reconnecting,
   reconnected,
+  ringing,
 }
 
 /// Connection state change event

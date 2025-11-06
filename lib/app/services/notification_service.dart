@@ -174,8 +174,8 @@ class NotificationService with WidgetsBindingObserver {
     );
   }
 
-  Future<void> cancelCallNotification(int chatId) async {
-    await _fln.cancel(chatId);
+  Future<void> cancelCallNotification(int chatId, String callId) async {
+    await _fln.cancel(chatId, tag: callId);
   }
 
   @override

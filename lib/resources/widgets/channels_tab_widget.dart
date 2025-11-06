@@ -9,6 +9,7 @@ import 'package:nylo_framework/nylo_framework.dart';
 import 'package:image_picker/image_picker.dart';
 import '/app/services/chat_service.dart';
 import '/app/models/chat.dart' as models;
+import '/app/models/message.dart';
 import '/resources/pages/chat_screen_page.dart';
 
 class ChannelsTab extends StatefulWidget {
@@ -26,6 +27,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   bool _isLoadingJoinedChannels = false;
   bool _joinedChannelsError = false;
   List<Channel> _joinedChannels = [];
+  int? _currentUserId;
 
   final List<Contact> _contacts = [
     Contact(name: "Layla B", image: "image2.png"),
@@ -89,7 +91,9 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
   }
 
   @override
-  get init => () {
+  get init => () async {
+        final userData = await Auth.data();
+        _currentUserId = userData?['id'];
         _loadMyChannels();
         _setupChatListListener();
       };
@@ -325,7 +329,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
           // Top section with proper layout
           Container(
             color: Color(0xff1C212C),
-            padding: const EdgeInsets.only(top: 50, left: 16, right: 16),
+            padding: const EdgeInsets.only(top: 38, left: 16, right: 16),
             child: Column(
               children: [
                 // Stillur logo aligned to left
@@ -414,7 +418,7 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                   ],
                 ),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
               ],
             ),
           ),
@@ -631,6 +635,101 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
     return _buildChannelsList(_joinedChannels);
   }
 
+  /// Get message preview text with appropriate icon for message type
+  Map<String, dynamic> _getMessagePreview(Message? lastMessage) {
+    if (lastMessage == null) {
+      return {'icon': null, 'text': ''};
+    }
+
+    IconData? icon;
+    String text;
+
+    switch (lastMessage.type) {
+      case 'PHOTO':
+      case 'IMAGE':
+        icon = Icons.photo;
+        text = lastMessage.caption?.isNotEmpty == true 
+            ? lastMessage.caption! 
+            : 'Photo';
+        break;
+      
+      case 'VIDEO':
+        icon = Icons.videocam;
+        text = lastMessage.caption?.isNotEmpty == true 
+            ? lastMessage.caption! 
+            : 'Video';
+        break;
+      
+      case 'AUDIO':
+      case 'VOICE':
+      case 'VOICE_NOTE':
+        icon = Icons.mic;
+        text = 'Voice message';
+        break;
+      
+      case 'DOCUMENT':
+      case 'FILE':
+        icon = Icons.insert_drive_file;
+        text = lastMessage.caption?.isNotEmpty == true 
+            ? lastMessage.caption! 
+            : 'Document';
+        break;
+      
+      case 'VOICE_CALL':
+        icon = Icons.phone;
+        text = _getCallStatusText(lastMessage, isVoiceCall: true);
+        break;
+      
+      case 'VIDEO_CALL':
+        icon = Icons.videocam;
+        text = _getCallStatusText(lastMessage, isVoiceCall: false);
+        break;
+      
+      case 'TEXT':
+      default:
+        icon = null;
+        text = lastMessage.text ?? lastMessage.caption ?? '';
+        break;
+    }
+
+    return {'icon': icon, 'text': text};
+  }
+
+  /// Get call status text for channel preview
+  String _getCallStatusText(Message message, {required bool isVoiceCall}) {
+    final callStatus = message.callStatus ?? 'UNKNOWN';
+    final isSentByMe = message.senderId == _currentUserId;
+    
+    switch (callStatus) {
+      case 'MISSED':
+        return isSentByMe ? 'Cancelled call' : 'Missed call';
+      case 'DECLINED':
+        return isSentByMe ? 'Call declined' : 'Declined call';
+      case 'FAILED':
+        return 'Call failed';
+      case 'ENDED':
+        if (message.duration != null && message.duration! > 0) {
+          return 'Call • ${_formatCallDuration(message.duration!)}';
+        }
+        return isSentByMe ? 'Outgoing call' : 'Incoming call';
+      case 'ONGOING':
+        return 'Call in progress';
+      case 'INITIALIZED':
+      default:
+        return isVoiceCall ? 'Voice call' : 'Video call';
+    }
+  }
+
+  /// Format call duration for preview
+  String _formatCallDuration(int seconds) {
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    if (minutes > 0) {
+      return '${minutes}m ${secs}s';
+    }
+    return '${secs}s';
+  }
+
   Widget _buildChannelsList(List<Channel> channels) {
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -690,24 +789,37 @@ class _ChannelsTabState extends NyState<ChannelsTab> {
                       const SizedBox(height: 4),
                       Builder(builder: (_) {
                         final lastMsg = channel.chat?.lastMessage;
-                        String preview = '';
-                        if (lastMsg != null) {
-                          final txt = (lastMsg.text ?? '').trim();
-                          final cap = (lastMsg.caption ?? '').trim();
-                          preview = txt.isNotEmpty ? txt : cap;
-                        }
+                        final messagePreview = _getMessagePreview(lastMsg);
+                        String preview = messagePreview['text'] as String;
+                        final messageIcon = messagePreview['icon'] as IconData?;
+                        
                         if (preview.isEmpty) {
                           preview = (channel.chat?.description ?? channel.description).trim();
                         }
-                        return Text(
-                          preview,
-                          style: TextStyle(
-                            color: Colors.grey.shade400,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        
+                        return Row(
+                          children: [
+                            if (messageIcon != null) ...[
+                              Icon(
+                                messageIcon,
+                                size: 16,
+                                color: Colors.grey.shade500,
+                              ),
+                              const SizedBox(width: 4),
+                            ],
+                            Expanded(
+                              child: Text(
+                                preview,
+                                style: TextStyle(
+                                  color: Colors.grey.shade400,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
                         );
                       }),
                     ],

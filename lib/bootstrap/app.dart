@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:nylo_framework/nylo_framework.dart';
+import '/app/services/call_overlay_service.dart';
+import '/resources/widgets/call_overlay_banner.dart';
 
 /// Main entry point for the application
 class Main extends StatelessWidget {
@@ -53,6 +55,39 @@ class Main extends StatelessWidget {
                 localizationsDelegates: NyLocalization.instance.delegates,
                 locale: locale,
                 supportedLocales: [Locale('en', 'US')],
+                builder: (context, child) {
+                  // Wrap the entire app with the call overlay banner
+                  return StreamBuilder<CallOverlayState?>(
+                    stream: CallOverlayService().overlayStream,
+                    builder: (context, snapshot) {
+                      final callState = snapshot.data;
+                      final hasBanner = callState != null;
+                      
+                      // Calculate banner height (SafeArea top + padding + content)
+                      final topPadding = MediaQuery.of(context).padding.top;
+                      final bannerHeight = hasBanner ? topPadding + 38.0 : 0.0;
+                      
+                      return Stack(
+                        children: [
+                          // The main app content with top padding when banner is showing
+                          Positioned.fill(
+                            top: bannerHeight,
+                            child: child ?? const SizedBox.shrink(),
+                          ),
+                          
+                          // Global call overlay banner (appears on ALL pages)
+                          if (hasBanner)
+                            Positioned(
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              child: CallOverlayBanner(callState: callState),
+                            ),
+                        ],
+                      );
+                    },
+                  );
+                },
               ),
             ),
           ),

@@ -24,6 +24,7 @@ import "../../app/utils/chat.dart";
 import "../../app/utils.dart";
 import "/app/services/chat_service.dart";
 import 'package:audioplayers/audioplayers.dart';
+import '/resources/widgets/call_message_widget.dart';
 import 'package:saver_gallery/saver_gallery.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
@@ -1968,6 +1969,10 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         return _buildVideoMessage(message);
       case "DOCUMENT":
         return _buildDocumentMessage(message);
+      
+      case "VOICE_CALL":
+      case "VIDEO_CALL":
+        return _buildCallMessage(message);
         
       case "TEXT":
       default:
@@ -2378,6 +2383,40 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
     String twoDigitMinutes = twoDigits(duration.inMinutes.remainder(60));
     String twoDigitSeconds = twoDigits(duration.inSeconds.remainder(60));
     return "$twoDigitMinutes:$twoDigitSeconds";
+  }
+
+  Widget _buildCallMessage(Message message) {
+    final bool isSentByMe = _currentUserId != null && message.senderId == _currentUserId;
+    final senderName = _getSenderName(message, isSentByMe);
+    final bool isLastMessage = _messages.isNotEmpty && _messages.last == message;
+
+    return Container(
+      margin: EdgeInsets.fromLTRB(2, 0, 2, isLastMessage ? 20 : 4),
+      child: Row(
+        mainAxisAlignment: isSentByMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        children: [
+          if (!isSentByMe) const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: isSentByMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
+                  onTapDown: (TapDownDetails details) {
+                    _showMessageContextMenu(context, message, details.globalPosition);
+                  },
+                  child: CallMessageWidget(
+                    message: message,
+                    isSentByMe: isSentByMe,
+                    senderName: senderName,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (isSentByMe) const SizedBox(width: 10),
+        ],
+      ),
+    );
   }
 
   Widget _buildPhotoMessage(Message message) {

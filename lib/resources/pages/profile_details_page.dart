@@ -865,15 +865,18 @@ class _ProfileDetailsPageState extends NyPage<ProfileDetailsPage> {
           // Username
           _buildInfoItem('Username', _userName),
 
-          const SizedBox(height: 12),
+          // Only show phone and email for non-group chats
+          if (!_isGroup) ...[
+            const SizedBox(height: 12),
 
-          // Phone Number
-          _buildInfoItem('Phone Number', '+971 57 7563 263'),
+            // Phone Number
+            _buildInfoItem('Phone Number', '+971 57 7563 263'),
 
-          const SizedBox(height: 12),
+            const SizedBox(height: 12),
 
-          // Email
-          _buildInfoItem('Email', 'laylabmoney@stillur.com'),
+            // Email
+            _buildInfoItem('Email', 'laylabmoney@stillur.com'),
+          ],
         ],
       ),
     );

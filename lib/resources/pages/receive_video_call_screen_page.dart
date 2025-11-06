@@ -195,7 +195,8 @@ class _ReceiveVideoCallScreenPageState
       if (navigationData != null) {
         final chatId = navigationData['chatId'];
         final callerId = navigationData['callerId'];
-        ChatService().clearIncomingCall(chatId, callerId, 'video');
+        final callId = navigationData['callId'];
+        ChatService().clearIncomingCall(chatId, callId);
       }
     } catch (e) {
       print('Could not clear call tracking in dispose: $e');
@@ -214,10 +215,11 @@ class _ReceiveVideoCallScreenPageState
     final navigationData = data();
     final chatID = navigationData['chatId'];
     final callerId = navigationData['callerId'];
-    
+    final callId = navigationData['callId'];
+
     // Clear call tracking when declining
-    ChatService().clearIncomingCall(chatID, callerId, 'video');
-    
+    ChatService().clearIncomingCall(chatID, callId);
+
     WebSocketService().sendDeclineCall(chatID, "video");
     Navigator.pop(context);
   }
@@ -248,7 +250,8 @@ class _ReceiveVideoCallScreenPageState
         
         // Clear call tracking
         final callerId = navigationData['callerId'];
-        ChatService().clearIncomingCall(currentChatId, callerId, 'video');
+        final callId = navigationData['callId'];
+        ChatService().clearIncomingCall(currentChatId, callId);
         
         // Close the screen
         if (mounted && Navigator.canPop(context)) {
@@ -272,7 +275,8 @@ class _ReceiveVideoCallScreenPageState
     // Clear call tracking when accepting
     final chatId = navigationData['chatId'];
     final callerId = navigationData['callerId'];
-    ChatService().clearIncomingCall(chatId, callerId, 'video');
+    final callId = navigationData['callId'];
+    ChatService().clearIncomingCall(chatId, callId);
 
     // Navigate to video call page with proper data
     Navigator.pop(context); // Close the incoming call screen first

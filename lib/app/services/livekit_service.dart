@@ -2,8 +2,19 @@ import 'dart:async';
 import 'package:flutter_app/app/networking/websocket_service.dart';
 import 'package:flutter_app/app/models/livekit_events.dart';
 import 'package:livekit_client/livekit_client.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 final url = 'ws://217.77.4.167:7880';
+
+// Call status enum
+enum CallStatus {
+  idle,        // No call
+  requesting,  // Getting token from API
+  connecting,  // Connecting to LiveKit room
+  ringing,     // Connected but waiting for other party
+  connected,   // Active call with participants
+  ended,      // Call has ended
+}
 
 class LiveKitService {
   static final LiveKitService _instance = LiveKitService._internal();
@@ -20,10 +31,16 @@ class LiveKitService {
   bool _isConnecting = false;
   
   // Current call metadata (persists beyond UI lifecycle)
-  String? _currentCallUUID;
+  
+  String? _currentCallId;
   int? _currentChatId;
   CallType? _currentCallType;
   Map<String, dynamic>? _currentCallData;
+  CallStatus _callStatus = CallStatus.idle;
+  bool _isJoining = false; // Track if joining incoming call
+  
+  // Ringtone management
+  AudioPlayer? _audioPlayer;
 
   // Participants tracking
   final List<RemoteParticipant> _remoteParticipants = [];
@@ -33,16 +50,18 @@ class LiveKitService {
   final Map<String, dynamic> _roomInfo = {};
   int _callDuration = 0;
   Timer? _durationTimer;
-
+  int? _startTime;
   // Grouped event stream controllers
   final _connectionEventController = StreamController<ConnectionStateEvent>.broadcast();
   final _participantEventController = StreamController<ParticipantChangeEvent>.broadcast();
   final _trackEventController = StreamController<TrackStateEvent>.broadcast();
+  final _callStatusController = StreamController<CallStatus>.broadcast();
 
   // Public streams for external listeners
   Stream<ConnectionStateEvent> get connectionEvents => _connectionEventController.stream;
   Stream<ParticipantChangeEvent> get participantEvents => _participantEventController.stream;
   Stream<TrackStateEvent> get trackEvents => _trackEventController.stream;
+  Stream<CallStatus> get callStatusStream => _callStatusController.stream;
 
   
   Room? get room => _room;
@@ -50,6 +69,7 @@ class LiveKitService {
   bool get isConnected => _room?.connectionState == ConnectionState.connected;
   bool get isConnecting => _isConnecting;
   int get callDuration => _callDuration;
+  CallStatus get callStatus => _callStatus;
   
   Map<String, dynamic> get roomInfo => Map.from(_roomInfo);
   List<Map<String, dynamic>> get participantHistory => List.from(_participantHistory);
@@ -58,25 +78,91 @@ class LiveKitService {
   bool get isCameraEnabled => _room?.localParticipant?.isCameraEnabled() ?? false;
   
   // Current call getters
-  String? get currentCallUUID => _currentCallUUID;
+  String? get currentCallUUID => _currentCallId;
   int? get currentChatId => _chatId;
   CallType? get currentCallType => _currentCallType;
   Map<String, dynamic>? get currentCallData => _currentCallData != null ? Map.from(_currentCallData!) : null;
-  bool get hasActiveCall => _currentCallUUID != null && isConnected;
+  bool get hasActiveCall => _chatId != null && isConnected;
   int? _chatId;
 
 
   StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
 
+  /// Play ringtone
+  Future<void> _playRingtone() async {
+    try {
+      print('🔔 _playRingtone called, _isJoining: $_isJoining');
+      await _audioPlayer?.stop();
+      _audioPlayer = AudioPlayer();
+      await _audioPlayer!.setReleaseMode(ReleaseMode.loop);
+      
+      print('🔔 AudioPlayer created and set to loop mode');
+      
+      if (_isJoining) {
+        // For incoming calls, you can use a different ringtone
+        print('🔔 Playing ringtone for INCOMING call');
+        await _audioPlayer!.play(AssetSource('audio/ringing_initiated.mp3'));
+      } else {
+        // For outgoing calls
+        print('🔔 Playing ringtone for OUTGOING call');
+        await _audioPlayer!.play(AssetSource('audio/ringing_initiated.mp3'));
+      }
+      
+      print('🔔 Ringtone started playing successfully');
+    } catch (e) {
+      print('❌ Error playing ringtone: $e');
+      print('❌ Error stack trace: ${StackTrace.current}');
+    }
+  }
+
+  /// Stop ringtone
+  Future<void> _stopRingtone() async {
+    try {
+      await _audioPlayer?.stop();
+      await _audioPlayer?.dispose();
+      _audioPlayer = null;
+      print('🔕 Ringtone stopped');
+    } catch (e) {
+      print('❌ Error stopping ringtone: $e');
+    }
+  }
+
+  /// Update call status and notify listeners
+  void _updateCallStatus(CallStatus newStatus) {
+    if (_callStatus != newStatus) {
+      final oldStatus = _callStatus;
+      _callStatus = newStatus;
+      _callStatusController.add(newStatus);
+      print('📞 Call status changed from $oldStatus to: $newStatus');
+      
+      // Handle ringtone based on status changes
+      if (newStatus == CallStatus.ringing && oldStatus != CallStatus.ringing) {
+        print('🔔 Triggering ringtone playback...');
+        _playRingtone();
+      } else if (newStatus == CallStatus.connected && oldStatus == CallStatus.ringing) {
+        print('🔕 Stopping ringtone...');
+        _stopRingtone();
+      }
+    } else {
+      print('⚠️ Status unchanged, still: $_callStatus');
+    }
+  }
+
+  /// Public method to update call status (can be called from voice_call_page)
+  void updateCallStatus(CallStatus newStatus, {bool isJoining = false}) {
+    print('📞 [PUBLIC API] updateCallStatus called with: $newStatus, isJoining: $isJoining');
+    _isJoining = isJoining;
+    _updateCallStatus(newStatus);
+  }
 
   Future<void> connect({
     required String token,
     required CallType callType,
+    required String callId,
     bool autoSubscribe = true,
     bool enableAudio = true,
     bool enableVideo = false,
     
-    String? callUUID,
     int? chatId,
     
     Map<String, dynamic>? callData,
@@ -85,9 +171,12 @@ class LiveKitService {
       print('⚠️ Connection attempt already in progress, skipping...');
       return;
     }
-
+    // _playRingtone();
     try {
       _isConnecting = true;
+      print('📞 [STATUS CHANGE] Setting status to CONNECTING');
+      _updateCallStatus(CallStatus.connecting);
+      
       print('🔄 Connecting to LiveKit room...');
       print('📍 URL: $url');
 
@@ -99,6 +188,12 @@ class LiveKitService {
 
       // Setup event listeners
       _setupRoomListeners();
+
+      // Setup WebSocket notification listener
+      _notificationSubscription =
+          WebSocketService().notificationStream.listen((notificationData) {
+        _handleIncomingNotification(notificationData);
+      });
 
       // Connect to room
       await _room!.connect(
@@ -112,17 +207,25 @@ class LiveKitService {
       print('✅ Connected to LiveKit room');
 
       // Store call metadata
-      _currentCallUUID = callUUID;
+      
       _currentChatId = chatId;
       _chatId = chatId;
       _currentCallType = callType;
       _currentCallData = callData;
+      _currentCallId = callId;
+      
+      // Set status to ringing after connection (unless already connected via call:start notification)
+      // Status should be 'connecting' at this point
+      // print("📞 Call status before post-connection check: $_callStatus");
+      // if (_callStatus == CallStatus.connecting) {
+      //   print('📞 [STATUS CHANGE] Setting status to RINGING (post-connection)');
+      //   _updateCallStatus(CallStatus.ringing);
+      //   print("📞 Status set to ringing - ringtone should play");
+      // } else if (_callStatus == CallStatus.connected) {
+      //   print("📞 Status already connected (call:start notification received early)");
+      // }
 
-      // Setup WebSocket notification listener
-      _notificationSubscription =
-          WebSocketService().notificationStream.listen((notificationData) {
-        _handleIncomingNotification(notificationData);
-      });
+      
 
       // Enable audio/video if requested
       if (enableAudio) {
@@ -181,6 +284,9 @@ class LiveKitService {
       print('🧹 Cleaning up LiveKit room...');
 
       try {
+        // Stop ringtone if playing
+        await _stopRingtone();
+        
         // Stop duration timer
         _stopDurationTimer();
 
@@ -202,24 +308,39 @@ class LiveKitService {
         _remoteParticipants.clear();
         
         // Clear call metadata
-        _currentCallUUID = null;
+        _currentCallId = null;
         _currentChatId = null;
         _chatId = null;
         _currentCallType = null;
         _currentCallData = null;
+        _isJoining = false;
+        _callDuration = 0;
+        _startTime = null;
+        _participantHistory.clear();
+        // Reset call status
+        print('📞 [STATUS CHANGE] Setting status to IDLE (cleanup)');
+        _updateCallStatus(CallStatus.ended);
       } catch (e) {
         print('⚠️ Error during room cleanup: $e');
         // Force clear references even if cleanup fails
+        await _stopRingtone();
         _notificationSubscription?.cancel();
         _notificationSubscription = null;
         _room = null;
         _listener = null;
         _remoteParticipants.clear();
-        _currentCallUUID = null;
+        _currentCallId = null;
         _currentChatId = null;
         _chatId = null;
         _currentCallType = null;
         _currentCallData = null;
+        _isJoining = false;
+        
+        _startTime = null;
+        
+        // Reset call status
+        print('📞 [STATUS CHANGE] Setting status to IDLE (error cleanup)');
+        _updateCallStatus(CallStatus.idle);
       }
     }
 
@@ -243,9 +364,23 @@ class LiveKitService {
           for (var participant in _room!.remoteParticipants.values) {
             _addParticipantToHistory(participant, 'existing');
           }
+          
+          // Don't update status here - wait for call:start notification
+          print('👥 Joined room with ${_room!.remoteParticipants.length} existing participants');
+        }
+        // Status remains as ringing until call:start notification is received
+        
+        
+        if(_isJoining){
+            _connectionEventController.add(ConnectionStateEvent(ConnectionStateType.connected));
+            updateCallStatus(CallStatus.connecting);
+        }else{
+          _connectionEventController.add(ConnectionStateEvent(ConnectionStateType.ringing));
+          updateCallStatus(CallStatus.ringing);
         }
         
-        _connectionEventController.add(ConnectionStateEvent(ConnectionStateType.connected));
+
+
       })
       ..on<RoomDisconnectedEvent>((event) {
         print('❌ Room disconnected: ${event.reason}');
@@ -258,6 +393,10 @@ class LiveKitService {
         print('👤 Participant connected: ${event.participant.name}');
         _remoteParticipants.add(event.participant);
         _addParticipantToHistory(event.participant, 'joined');
+        
+        // Don't update status to connected here - wait for call:start notification
+        print('👤 Participant joined, waiting for call:start notification');
+        
         _participantEventController.add(ParticipantChangeEvent(
           ParticipantChangeType.connected,
           event.participant,
@@ -381,7 +520,14 @@ class LiveKitService {
 
     _callDuration = 0;
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      _callDuration++;
+      if (_startTime != null) {
+        // Calculate duration based on server start time (epoch in seconds)
+        final currentEpochSeconds = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        _callDuration = currentEpochSeconds - _startTime!;
+      } else {
+        // Fallback to simple counter if no start time available
+        _callDuration++;
+      }
     });
   }
 
@@ -474,7 +620,8 @@ class LiveKitService {
     print("Received notification: $notificationData");
     final action = notificationData['action'];
     final notificationChatId = notificationData['chatId'];
-    // final notificationType = notificationData['type'];
+    final notificationCallId = notificationData['callId'];
+    
     
     // Only process if it's for THIS call and matches the call type
     if ((action == 'call:declined' || action == 'call:ended') && 
@@ -483,6 +630,22 @@ class LiveKitService {
         ) {
       print("📞 Processing call $action notification for chat $_chatId");
       await disconnect(sendDeclineNotification: false);
+    }
+    
+    // Handle call:start notification
+    print("Current call id : $_currentCallId, notification call id: $notificationCallId");
+    if (action == "call:start" && 
+        notificationCallId == _currentCallId) {
+      print("📞 Processing call:start notification for call $_currentCallId");
+      
+      final startsAt = notificationData['startsAt'];
+      
+      if (startsAt != null) {
+        _startTime = startsAt as int?;
+        print("⏰ Call start time set to: $_startTime");
+      }
+      print('📞 [STATUS CHANGE] Setting status to CONNECTED (call:start notification)');
+      updateCallStatus(CallStatus.connected);
     }
   }
 

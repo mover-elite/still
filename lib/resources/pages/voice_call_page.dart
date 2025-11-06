@@ -7,10 +7,9 @@ import 'package:flutter_app/app/services/call_overlay_service.dart';
 import 'package:flutter_app/app/models/livekit_events.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'dart:async';
-import 'package:audioplayers/audioplayers.dart';
 
-// ✅ Call states for tracking call progress
-enum CallState { requesting, ringing, connected }
+// ✅ Call states for UI tracking
+enum CallState { requesting, ringing, connected, ended }
 
 // ✅ Participant data model
 class CallParticipant {
@@ -36,12 +35,12 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   // LiveKitService instance
   final LiveKitService _liveKitService = LiveKitService();
   
+  // UI state - synced with LiveKitService
   CallState _callState = CallState.requesting;
   bool _isMuted = false;
   bool _isSpeaker = false;
   bool _isVideoOn = false;
   int _callDuration = 0;
-  AudioPlayer? _audioPlayer;
   
   CallType _callType = CallType.single;
   bool _isEndingCall = false;
@@ -53,6 +52,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   String defaultImage = "image2.png";
   int? _chatId;
   int? _callerId;
+  String? _callId;
   bool _isJoining = false;
   String _groupName = "";
   String _groupImage = "image9.png";
@@ -62,6 +62,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   // Event subscriptions from LiveKitService
   StreamSubscription<ConnectionStateEvent>? _connectionSubscription;
   StreamSubscription<ParticipantChangeEvent>? _participantSubscription;
+  StreamSubscription<CallStatus>? _callStatusSubscription;
   Timer? _durationUpdateTimer;
 
   // Animation controllers
@@ -69,6 +70,24 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   late AnimationController _fadeController;
   late Animation<double> _pulseAnimation;
   late Animation<double> _fadeAnimation;
+
+  // Helper method to convert CallStatus to CallState
+  CallState _getCallState() {
+    switch (_liveKitService.callStatus) {
+      case CallStatus.idle:
+        return CallState.requesting;
+      case CallStatus.requesting:
+        return CallState.requesting;
+      case CallStatus.connecting:
+        return CallState.requesting;
+      case CallStatus.ringing:
+        return CallState.ringing;
+      case CallStatus.connected:
+        return CallState.connected;
+      case CallStatus.ended:
+        return CallState.ended; // Treat ended as ended for UI
+    }
+  }
 
   @override
   get init => () {
@@ -100,8 +119,9 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         ));
 
         // Start animations for requesting/ringing states
-        if (_callState == CallState.requesting ||
-            _callState == CallState.ringing) {
+        final callState = _getCallState();
+        if (callState == CallState.requesting ||
+            callState == CallState.ringing) {
           _pulseController.repeat(reverse: true);
           _fadeController.repeat(reverse: true);
         }
@@ -113,31 +133,29 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         _extractCallData();
       };
 
-    Future<void> _playRingtone() async {
-    _audioPlayer?.stop();
-    _audioPlayer = AudioPlayer();
-    await _audioPlayer!.setReleaseMode(ReleaseMode.loop);
-    
-    if(_isJoining){
-    //   await _audioPlayer!.play(AssetSource('audio/iphone_ringing_tone.mp3'));
-    }else{
-      await _audioPlayer!.play(AssetSource('audio/ringing_initiated.mp3'));
-    }
-  }
-
-  Future<void> _stopRingtone() async {
-    try{
-      await _audioPlayer?.stop();
-      await _audioPlayer?.dispose();
-      _audioPlayer = null;
-    }catch(e){
-
-    }
-    
-  }
-
   /// Setup LiveKitService event listeners
   void _setupLiveKitListeners() {
+    // Listen to call status changes from LiveKitService
+    _callStatusSubscription = _liveKitService.callStatusStream.listen((status) {
+      if (!mounted) return;
+      
+      setState(() {
+        // Sync local call state with LiveKitService
+        _callState = _getCallState();
+      });
+      
+      print('📞 Call status updated from LiveKitService: $status -> $_callState');
+      
+      // Handle animations based on status
+      if (status == CallStatus.ringing) {
+        _startRingingAnimations();
+      } else if (status == CallStatus.connected) {
+        _stopAllAnimations();
+      }else if(status == CallStatus.ended){
+        _endCall(); 
+      }
+    });
+    
     // Listen to connection events
     _connectionSubscription = _liveKitService.connectionEvents.listen((event) {
       if (!mounted) return;
@@ -146,21 +164,32 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         case ConnectionStateType.connected:
           print('✅ Connected to LiveKit room');
           // Check if there are already participants
-          if (_liveKitService.remoteParticipants.isNotEmpty) {
+          // if (_liveKitService.remoteParticipants.isNotEmpty) {
+            
             print('👥 Found existing participants, joining active call');
-            setState(() {
-              _callState = CallState.connected;
-            });
+            // setState(() {
+            //   _callState = CallState.connected;
+            // });
             _syncParticipants();
+
             _stopAllAnimations();
-            _stopRingtone();
-          } else {
-            print('📞 Room connected, waiting for other participants...');
-            setState(() {
-              _callState = CallState.ringing;
-            });
-            _startRingingAnimations();
-          }
+          // } 
+          
+          // else {
+          //   print('📞 Room connected, waiting for other participants...');
+          //   setState(() {
+          //     _callState = CallState.ringing;
+          //   });
+          //   _startRingingAnimations();
+          // }
+          break;
+        
+        case ConnectionStateType.ringing:
+          print('📞 Incoming call is ringing...');
+          setState(() {
+            _callState = CallState.ringing;
+          });
+          _startRingingAnimations();
           break;
 
         case ConnectionStateType.disconnected:
@@ -173,7 +202,6 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         case ConnectionStateType.reconnecting:
           print('🔄 Room reconnecting...');
           break;
-
         case ConnectionStateType.reconnected:
           print('✅ Room reconnected');
           break;
@@ -187,12 +215,11 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       switch (event.type) {
         case ParticipantChangeType.connected:
           print('👤 Participant connected: ${event.participant.name}');
-          setState(() {
-            _callState = CallState.connected;
-          });
-          _syncParticipants();
-          _stopAllAnimations();
-          _stopRingtone();
+          // setState(() {
+          //   _callState = CallState.connected;
+          // });
+          // _syncParticipants();
+          // _stopAllAnimations();
           break;
 
         case ParticipantChangeType.disconnected:
@@ -212,7 +239,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       if (mounted && _liveKitService.isConnected) {
         setState(() {
           _callDuration = _liveKitService.callDuration;
-          _isMuted = !_liveKitService.isMicrophoneEnabled;
+          // _isMuted = !_liveKitService.isMicrophoneEnabled;
         });
         
         // Update the overlay banner if it's showing
@@ -231,32 +258,72 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
     if (navigationData != null) {
       _isJoining = navigationData['isJoining'] ??
             false; // Check if joining incoming call
-        final bool initiateCall = navigationData['initiateCall'] ?? false;
+      final bool initiateCall = navigationData['initiateCall'] ?? false;
+      final bool isReturningFromMinimize = navigationData['isReturningFromMinimize'] ?? false;
+      
       _chatId = navigationData['chatId'];
+      _callId = navigationData['callId'];
+      // If returning from minimize, just restore the UI state from LiveKitService
+      if (isReturningFromMinimize) {
+        print('🔄 Returning from minimized state, syncing with LiveKitService...');
+        
+        if (_liveKitService.hasActiveCall) {
+          setState(() {
+            // Sync state from LiveKitService
+            _callState = _getCallState();
+            _callDuration = _liveKitService.callDuration;
+            _isMuted = !_liveKitService.isMicrophoneEnabled;
+          });
+          
+          // Sync participants for group calls
+          if (_liveKitService.currentCallType == CallType.group) {
+            _callType = CallType.group;
+            _syncParticipants();
+            
+            // Get group info
+            final groupInfo = await ChatService().getChatDetails(_chatId!);
+            if(groupInfo != null){
+              _groupName = groupInfo.name;
+            }
+            _groupImage = navigationData['avatar'] ?? _groupImage;
+          } else {
+            _callType = CallType.single;
+            final partner = navigationData['partner'];
+            if (partner != null) {
+              _contactName = partner['username'] ?? _contactName;
+              _contactImage = partner['avatar'];
+            }
+          }
+          
+          print('✅ UI state restored from LiveKitService');
+        } else {
+          print('❌ No active call in LiveKitService, cannot return to call');
+          _showErrorDialog('Call has ended');
+        }
+        return;
+      }
 
+      // Normal flow for new calls
       if (navigationData['isGroup'] == true) {
         _callType = CallType.group;
         
-        
-
-        
         final groupInfo = await ChatService().getChatDetails(_chatId!);
         if(groupInfo != null){
-          // _groupImage = groupInfo.avatar ?? "image9.png";
           _groupName = groupInfo.name;
-      }
+        }
         
         _groupImage = navigationData['avatar'] ?? _groupImage;
         
         print("_groupName: $_groupName, _groupImage: $_groupImage");
         _callerId =
             navigationData['callerId']; // Get caller ID for incoming calls
-          print("Navigation Data: $navigationData");
-          if (_isJoining) {
+        print("Navigation Data: $navigationData");
+        
+        if (_isJoining) {
           // For incoming calls, start directly in requesting state
+          _liveKitService.updateCallStatus(CallStatus.requesting, isJoining: true);
           setState(() {
             _callState = CallState.requesting;
-
           });
           _startRequestingAnimations();
 
@@ -274,28 +341,21 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
             }
           });
         }
-
-        
-        // _participants = (navigationData['participants'] as List)
-        //     .map((p) => CallParticipant.fromJson(p))
-        //     .toList();
       } else {
         _callType = CallType.single;
         final partner = navigationData['partner'];
         _contactName = partner['username'] ?? _contactName;
         _contactImage = partner['avatar'];
         
-        
         _chatId = navigationData['chatId'];
         _callerId =
             navigationData['callerId']; // Get caller ID for incoming calls
         
-
         if (_isJoining) {
           // For incoming calls, start directly in requesting state
+          _liveKitService.updateCallStatus(CallStatus.requesting, isJoining: true);
           setState(() {
             _callState = CallState.requesting;
-
           });
           _startRequestingAnimations();
 
@@ -370,6 +430,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
     try {
       // ✅ State 1: Requesting - Getting token from API
+      _liveKitService.updateCallStatus(CallStatus.requesting, isJoining: false);
       setState(() {
         _callState = CallState.requesting;
       });
@@ -388,17 +449,28 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
       print("✅ Call token received: ${response.callToken}");
 
-      // ✅ State 2: Ringing - Room setup completed, waiting for other party
-      setState(() {
-        _callState = CallState.ringing;
-      });
+      // State will be updated to ringing by LiveKitService.connect
       _startRingingAnimations();
+
+      // Prepare call data to store in LiveKitService
+      final callData = <String, dynamic>{};
+      if (_callType == CallType.group) {
+        callData['groupName'] = _groupName;
+        callData['avatar'] = _groupImage;
+      } else {
+        callData['partner'] = {
+          'username': _contactName,
+          'avatar': _contactImage,
+        };
+      }
 
       await _liveKitService.connect(        
         token: response.callToken,
         callType: _callType,
         chatId: _chatId!,
         enableAudio: true,
+        callData: callData,
+        callId: response.callId,
       );
     } catch (e) {
       print("❌ Error starting call: $e");
@@ -415,10 +487,10 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
     }
 
     try {
-      print("🔄 Joining call for chat ID: $_chatId from caller: $_callerId");
+      print("🔄 Joining call for chat ID: $_chatId from caller: $_callerId with callId: $_callId");
 
       ChatApiService chatApiService = ChatApiService();
-      final response = await chatApiService.joinVoiceCall(_chatId!);
+      final response = await chatApiService.joinVoiceCall(_chatId!, _callId!);
 
       if (response == null || response.callToken.isEmpty) {
         print("❌ Failed to get call token for joining. Please try again.");
@@ -426,11 +498,25 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         return;
       }
 
+      // Prepare call data to store in LiveKitService
+      final callData = <String, dynamic>{};
+      if (_callType == CallType.group) {
+        callData['groupName'] = _groupName;
+        callData['avatar'] = _groupImage;
+      } else {
+        callData['partner'] = {
+          'username': _contactName,
+          'avatar': _contactImage,
+        };
+      }
+
       await _liveKitService.connect(        
         token: response.callToken,
         callType: _callType,
         chatId: _chatId!,
         enableAudio: true,
+        callData: callData,
+        callId: response.callId,
       );
     } catch (e) {
       print("❌ Error joining call: $e");
@@ -447,7 +533,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   /// ✅ Start animations for ringing state
   void _startRingingAnimations() {
     // Animations continue from requesting state
-    _playRingtone();
+    // Ringtone is now managed by LiveKitService
     if (!_pulseController.isAnimating) {
       _pulseController.repeat(reverse: true);
       _fadeController.repeat(reverse: true);
@@ -563,6 +649,8 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         }
       case CallState.connected:
         return _formatDuration(_callDuration);
+      case CallState.ended:
+        return "Call Ended";
     }
   }
 
@@ -593,6 +681,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
     // Always cancel subscriptions to prevent memory leaks
     _connectionSubscription?.cancel();
     _participantSubscription?.cancel();
+    _callStatusSubscription?.cancel();
     _durationUpdateTimer?.cancel();
     
     // Only end the call if it wasn't minimized
@@ -611,9 +700,8 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       // The overlay banner will continue showing updates
     }
     
-    // Cleanup animations and audio
+    // Cleanup animations (audio is managed by LiveKitService)
     _stopAllAnimations();
-    _audioPlayer?.dispose();
     
     _pulseController.dispose();
     _fadeController.dispose();

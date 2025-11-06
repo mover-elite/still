@@ -88,7 +88,7 @@ class _CallsTabState extends NyState<CallsTab> {
       backgroundColor: Color(0xFF0F131B),
       appBar: PreferredSize(
         preferredSize:
-            const Size.fromHeight(80), // Increased height for two rows
+            const Size.fromHeight(60), // Reduced height for compact header
         child: AppBar(
           backgroundColor: Color(0xFF1C212C),
           elevation: 0,
@@ -97,7 +97,7 @@ class _CallsTabState extends NyState<CallsTab> {
             child: Column(
               children: [
                 SizedBox(
-                  height: 10,
+                  height: 4,
                 ),
                 // Top row - Logo aligned left
                 // Container(
@@ -117,7 +117,7 @@ class _CallsTabState extends NyState<CallsTab> {
 
                 // Bottom row - Calls title centered
                 Container(
-                  height: 50,
+                  height: 44,
                   alignment: Alignment.center,
                   child: Text(
                     'Calls',

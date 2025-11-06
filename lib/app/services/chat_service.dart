@@ -526,9 +526,9 @@ class ChatService {
       final int callerId = data['callerId'];
       final int chatId = data['chatId'];
       final String type = data['type'];
-      
+      final String callId = data['callId'];
       // Create a unique key for this call
-      final callKey = '$chatId-$callerId-$type';
+      final callKey = callId;
       
       // Prevent duplicate call notifications
       if (_activeIncomingCalls.contains(callKey)) {
@@ -564,6 +564,7 @@ class ChatService {
           "groupName": chat.name,
           'chatId': chatId,
           'callerId': callerId,
+          'callId': callId,
           'initiateCall': false, // This indicates joining, not initiating
           'isJoining': true, // Flag to indicate this is an incoming call
         };
@@ -604,12 +605,12 @@ class ChatService {
   }
 
   /// Clear call tracking for a specific chat/caller combination
-  void clearIncomingCall(int chatId, int callerId, String type) async {
-    final callKey = '$chatId-$callerId-$type';
+  void clearIncomingCall(int chatId, String callId) async {
+    final callKey = callId;
     _activeIncomingCalls.remove(callKey);
     
     // Cancel any active call notification
-    await NotificationService.instance.cancelCallNotification(chatId);
+    await NotificationService.instance.cancelCallNotification(chatId, callId);
     
     print('📞 Cleared incoming call tracking: $callKey');
   }
@@ -620,12 +621,12 @@ class ChatService {
       final int chatId = data['chatId'];
       final int callerId = data['callerId'] ?? data['userId'];
       final String type = data['type'] ?? 'audio'; // Default to audio if not specified
+      final String callId = data['callId'];
       print("Data for call ended: $data");
-      clearIncomingCall(chatId, callerId, type);
+      clearIncomingCall(chatId, callId);
       
       // Cancel any active call notification
-      await NotificationService.instance.cancelCallNotification(chatId);
-      
+      await NotificationService.instance.cancelCallNotification(chatId, callId);
       print('📞 Call ended/declined for chat $chatId');
     } catch (e) {
       print('❌ Error handling call ended: $e');
@@ -639,16 +640,16 @@ class ChatService {
       final chatId = actionData['chatId'];
       final callerId = actionData['callerId'];
       final callType = actionData['callType'];
-      
+      final callId = actionData['callId'];
       print('📞 Call action received: $action for chat $chatId');
       
       // Cancel the notification
-      await NotificationService.instance.cancelCallNotification(chatId);
-      
+      await NotificationService.instance.cancelCallNotification(chatId, callId);
+
       if (action.toString().startsWith('decline_')) {
         // User declined the call from notification
         print('📞 Declining call from notification');
-        clearIncomingCall(chatId, callerId, callType);
+        clearIncomingCall(chatId, callId);
         WebSocketService().sendDeclineCall(chatId, callType);
       } else if (action.toString().startsWith('accept_') || action == 'open') {
         // User accepted the call from notification or tapped the notification
