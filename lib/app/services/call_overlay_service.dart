@@ -14,6 +14,7 @@ class CallOverlayService {
   Stream<CallOverlayState?> get overlayStream => _overlayController.stream;
   CallOverlayState? _currentState;
   Timer? _updateTimer;
+  StreamSubscription<CallStatus>? _callStatusSubscription;
   final LiveKitService _liveKitService = LiveKitService();
 
   CallOverlayState? get currentState => _currentState;
@@ -70,6 +71,31 @@ class CallOverlayService {
     print("   Current state created, adding to stream...");
     _overlayController.add(_currentState);
     print("   State added to stream. Has listeners: ${_overlayController.hasListener}");
+    
+    // Listen to call status changes to auto-hide on call end
+    _callStatusSubscription?.cancel();
+    _callStatusSubscription = _liveKitService.callStatusStream.listen((status) {
+      print("📞 CallOverlayService received status update: $status");
+      
+      // Auto-hide banner when call ends or goes idle
+      if (status == CallStatus.ended || status == CallStatus.idle) {
+        print("📞 Call ended/idle - hiding banner");
+        hideCallBanner();
+        
+      } else if (_currentState != null) {
+        // Update status in the current state
+        _currentState = CallOverlayState(
+          name: _currentState!.name,
+          image: _currentState!.image,
+          callType: _currentState!.callType,
+          chatId: _currentState!.chatId,
+          duration: _currentState!.duration,
+          isMuted: _currentState!.isMuted,
+          callStatus: status,
+        );
+        _overlayController.add(_currentState);
+      }
+    });
     
     // Start timer to update duration and status from LiveKitService
     _updateTimer?.cancel();
@@ -131,14 +157,18 @@ class CallOverlayService {
 
   /// Hide the minimized call banner
   void hideCallBanner() {
+    print("🎯 CallOverlayService.hideCallBanner called");
     _updateTimer?.cancel();
     _updateTimer = null;
+    _callStatusSubscription?.cancel();
+    _callStatusSubscription = null;
     _currentState = null;
     _overlayController.add(null);
   }
 
   void dispose() {
     _updateTimer?.cancel();
+    _callStatusSubscription?.cancel();
     _overlayController.close();
   }
 }

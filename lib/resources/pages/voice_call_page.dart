@@ -227,9 +227,9 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
           _syncParticipants();
           
           // If no remote participants, end the call
-          if (_liveKitService.remoteParticipants.isEmpty && _callState == CallState.connected) {
-            _endCall();
-          }
+          // if (_liveKitService.remoteParticipants.isEmpty && _callState == CallState.connected) {
+          //   _endCall();
+          // }
           break;
       }
     });
@@ -239,7 +239,8 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       if (mounted && _liveKitService.isConnected) {
         setState(() {
           _callDuration = _liveKitService.callDuration;
-          // _isMuted = !_liveKitService.isMicrophoneEnabled;
+          // Sync mute state from LiveKitService
+          _isMuted = !_liveKitService.isMicrophoneEnabled;
         });
         
         // Update the overlay banner if it's showing
@@ -562,11 +563,16 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
   /// ✅ Mute/unmute microphone
   Future<void> _toggleMute() async {
-    await _liveKitService.toggleMicrophone();
+    final newMuteState = await _liveKitService.toggleMicrophone();
     if (mounted) {
       setState(() {
-        _isMuted = !_liveKitService.isMicrophoneEnabled;
+        _isMuted = !newMuteState; // toggleMicrophone returns the new enabled state
       });
+      
+      // Update overlay banner immediately
+      if (CallOverlayService().currentState != null) {
+        CallOverlayService().updateMuteState(_isMuted);
+      }
     }
   }
 
@@ -589,7 +595,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       CallOverlayService().hideCallBanner();
 
       // Disconnect via LiveKitService
-      await _liveKitService.disconnect(reason: 'User ended call');
+      await _liveKitService.disconnect(reason: 'User ended call', sendDeclineNotification: true);
       
       // Safely pop the navigator
       if (mounted && Navigator.canPop(context)) {

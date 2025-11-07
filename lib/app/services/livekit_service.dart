@@ -265,13 +265,13 @@ class LiveKitService {
       // Capture disconnection info before cleanup
       _captureDisconnectionInfo(reason);
 
-      // Cleanup room
-      await _ensureRoomCleanup();
       
       if(sendDeclineNotification && _currentChatId != null){
         WebSocketService().sendDeclineCall(_currentChatId!, "audio");
       }
 
+      // Cleanup room
+      await _ensureRoomCleanup();
       print('✅ Disconnected from LiveKit room');
     } catch (e) {
       print('❌ Error disconnecting from room: $e');
