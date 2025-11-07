@@ -555,7 +555,8 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
       // Don't send if we're ending because we received a decline notification
       if (_chatId != null && sendDeclineNotification) {
         print("📞 Sending decline notification to other party");
-        WebSocketService().sendDeclineCall(_chatId!, "video");
+        // TODO: Pass callId if needed
+        WebSocketService().sendDeclineCall(_chatId!, "video", "Dunno");
       } else if (!sendDeclineNotification) {
         print("📞 Not sending decline notification (received from other party)");
       }

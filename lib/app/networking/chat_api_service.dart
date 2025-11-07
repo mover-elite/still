@@ -3,6 +3,7 @@ import 'package:flutter_app/app/models/chat_links_response.dart';
 import 'package:flutter_app/app/models/chat_messages_response.dart';
 import 'package:flutter_app/app/models/media_response.dart';
 import 'package:flutter_app/app/models/user.dart';
+import 'package:flutter_app/app/models/user_calls_model.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import '../models/group_creation_response.dart';
 import '/app/models/chat.dart';
@@ -452,4 +453,12 @@ class ChatApiService extends ApiService {
       return null;
     }
   }
+
+  /// Get user calls
+  Future<List<UserCallsModel>?> getUserCalls() async {
+    return await network<List<UserCallsModel>>(
+      request: (request) => request.get("/call"),
+    );
+  }
+
 }

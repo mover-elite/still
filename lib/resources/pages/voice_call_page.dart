@@ -151,7 +151,8 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         _startRingingAnimations();
       } else if (status == CallStatus.connected) {
         _stopAllAnimations();
-      }else if(status == CallStatus.ended){
+      } else if (status == CallStatus.ended) {
+        print("Ending call in the page due to LiveKitService status ended");
         _endCall(); 
       }
     });
@@ -579,10 +580,10 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   /// ✅ End the call and navigate back
   Future<void> _endCall() async {
     // Guard: Prevent duplicate end call processing
-    if (_isEndingCall) {
-      print("⚠️ _endCall already in progress, skipping duplicate call");
-      return;
-    }
+    // if (_isEndingCall) {
+    //   print("⚠️ _endCall already in progress, skipping duplicate call");
+    //   return;
+    // }
     
     _isEndingCall = true;
     _isMinimized = false; // Ensure this is not treated as a minimize
@@ -598,6 +599,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       await _liveKitService.disconnect(reason: 'User ended call', sendDeclineNotification: true);
       
       // Safely pop the navigator
+      print("Can pop navigator: ${Navigator.canPop(context)}");
       if (mounted && Navigator.canPop(context)) {
         Navigator.of(context).pop();
       }

@@ -220,7 +220,7 @@ class _ReceiveVideoCallScreenPageState
     // Clear call tracking when declining
     ChatService().clearIncomingCall(chatID, callId);
 
-    WebSocketService().sendDeclineCall(chatID, "video");
+    WebSocketService().sendDeclineCall(chatID, "video", callId);
     Navigator.pop(context);
   }
 

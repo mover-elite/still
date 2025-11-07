@@ -618,11 +618,13 @@ class ChatService {
   /// Handle call ended/declined notification
   void _handleCallEnded(Map<String, dynamic> data) async {
     try {
+      print("Handling call ended/declined: $data");
       final int chatId = data['chatId'];
-      final int callerId = data['callerId'] ?? data['userId'];
-      final String type = data['type'] ?? 'audio'; // Default to audio if not specified
-      final String callId = data['callId'];
+      // final int callerId = data['callerId'] ?? data['userId'];
+      // final String type = data['type'] ?? 'audio'; // Default to audio if not specified
       print("Data for call ended: $data");
+      final String callId = data['callId'];
+      
       clearIncomingCall(chatId, callId);
       
       // Cancel any active call notification
@@ -650,7 +652,7 @@ class ChatService {
         // User declined the call from notification
         print('📞 Declining call from notification');
         clearIncomingCall(chatId, callId);
-        WebSocketService().sendDeclineCall(chatId, callType);
+        WebSocketService().sendDeclineCall(chatId, callType, callId);
       } else if (action.toString().startsWith('accept_') || action == 'open') {
         // User accepted the call from notification or tapped the notification
         print('📞 Accepting call from notification');

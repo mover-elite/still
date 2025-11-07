@@ -467,6 +467,11 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
               ? (messageData['caption'] as String?) ?? old.caption
               : old.caption;
 
+            // final 
+            final String? updateCallStatus = messageData['callStatus'] != null
+              ? (messageData['callStatus'] as String?) ?? old.callStatus
+              : old.callStatus;
+
             final DateTime updatedAt = messageData['updatedAt'] != null
               ? (DateTime.tryParse(messageData['updatedAt'].toString()) ??
                 DateTime.now())
@@ -475,12 +480,15 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
             // Replace message with an updated instance preserving existing fields
             _messages[index] = Message(
             id: old.id,
+            
             senderId: old.senderId,
             chatId: old.chatId,
             type: old.type,
             text: updatedText,
+            callStatus: updateCallStatus,
             caption: updatedCaption,
             fileId: old.fileId,
+            
             tempImagePath: old.tempImagePath,
             tempVideoPath: old.tempVideoPath,
             createdAt: old.createdAt,

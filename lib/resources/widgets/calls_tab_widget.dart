@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/app/models/user_calls_model.dart';
+import 'package:flutter_app/app/models/chat.dart';
+import 'package:flutter_app/app/networking/chat_api_service.dart';
+import 'package:flutter_app/app/services/chat_service.dart';
 import 'package:flutter_app/resources/pages/video_call_page.dart';
 import 'package:flutter_app/resources/pages/voice_call_page.dart';
 import 'package:flutter_app/resources/pages/profile_details_page.dart';
@@ -16,62 +20,59 @@ class _CallsTabState extends NyState<CallsTab> {
   String _currentActiveLetter = "A";
 
   Set<String> _selectedContacts = {};
-
-  // Sample data
-  final List<Contact> _contacts = [
-    Contact(name: "Eleanor", image: "image1.png", isOnline: true),
-    Contact(name: "Layla B", image: "image2.png", isOnline: false),
-    Contact(name: "Gadia", image: "image3.png", isOnline: true),
-    Contact(name: "Sandra", image: "image4.png", isOnline: false),
-    Contact(name: "Sheilla", image: "image5.png", isOnline: true),
-    Contact(name: "Ahmed", image: "image6.png", isOnline: false),
-    Contact(name: "Rodriga", image: "image7.png", isOnline: true),
-    Contact(name: "Fenta", image: "image8.png", isOnline: false),
-  ];
-
-  final List<CallHistory> _callHistory = [
-    CallHistory(
-      contact: Contact(name: "Eleanor", image: "image1.png"),
-      time: "08:24PM",
-      type: CallType.incoming,
-      duration: "10 minutes 3 minutes",
-    ),
-    CallHistory(
-      contact: Contact(name: "Layla B", image: "image2.png"),
-      time: "11:23AM",
-      type: CallType.outgoing,
-      duration: "20 outgoing minutes",
-      count: 2,
-    ),
-    CallHistory(
-      contact: Contact(name: "Sheilla", image: "image5.png"),
-      time: "09:23AM",
-      type: CallType.incoming,
-      duration: "10 incoming 6 minutes",
-    ),
-    CallHistory(
-      contact: Contact(name: "Fast Cars and tracks", image: "image9.png"),
-      time: "Yesterday",
-      type: CallType.missed,
-      duration: "Missed",
-    ),
-    CallHistory(
-      contact: Contact(name: "Gadia", image: "image3.png"),
-      time: "Yesterday",
-      type: CallType.missed,
-      duration: "Missed",
-    ),
-    CallHistory(
-      contact: Contact(name: "Sandra", image: "image4.png"),
-      time: "Yesterday",
-      type: CallType.outgoing,
-      duration: "3 outgoing minutes",
-      count: 4,
-    ),
-  ];
+  
+  // Data loaded from API
+  List<UserCallsModel> _callHistory = [];
+  List<Chat> _chats = [];
+  bool _isLoadingCalls = true;
 
   @override
-  get init => () {};
+  get init => () {
+    _loadCallHistory();
+    _loadChats();
+  };
+
+  /// Load call history from API
+  Future<void> _loadCallHistory() async {
+    try {
+      setState(() => _isLoadingCalls = true);
+      final apiService = ChatApiService();
+      final calls = await apiService.getUserCalls();
+      if (calls != null) {
+        setState(() {
+          _callHistory = calls;
+          _isLoadingCalls = false;
+        });
+        print('✅ Loaded ${calls.length} call history items');
+      } else {
+        setState(() => _isLoadingCalls = false);
+        print('⚠️ No calls returned from API');
+      }
+    } catch (e) {
+      setState(() => _isLoadingCalls = false);
+      print('❌ Error loading call history: $e');
+    }
+  }
+
+  /// Load chats from ChatService
+  Future<void> _loadChats() async {
+    try {
+      // Ensure ChatService is initialized
+      if (!ChatService().isInitialized) {
+        print('⏳ Initializing ChatService...');
+        await ChatService().initialize();
+      }
+      
+      final chatList = await ChatService().loadChatList();
+      setState(() {
+        _chats = chatList;
+      });
+      print('✅ Loaded ${chatList.length} chats for calls tab');
+      print('Private chats: ${chatList.where((c) => c.type == "PRIVATE").length}');
+    } catch (e) {
+      print('❌ Error loading chats: $e');
+    }
+  }
 
   void _showNewCallBottomSheet() {
     showModalBottomSheet(
@@ -138,6 +139,12 @@ class _CallsTabState extends NyState<CallsTab> {
   }
 
   Widget _buildMainCallsView() {
+    if (_isLoadingCalls) {
+      return const Center(
+        child: CircularProgressIndicator(color: Color(0xFF3498DB)),
+      );
+    }
+
     return Column(
       children: [
         // Make private calls section
@@ -204,7 +211,7 @@ class _CallsTabState extends NyState<CallsTab> {
           ),
         ),
 
-        // Make your first call now section
+        // Recent calls section
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -216,35 +223,31 @@ class _CallsTabState extends NyState<CallsTab> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text(
-                      'Make your first call now',
+                      'Recent calls',
                       style: TextStyle(
                           color: Color(0xFFE8E7EA),
                           fontSize: 16,
                           fontWeight: FontWeight.w700),
                     ),
-                    // TextButton(
-                    //   onPressed: () {
-                    //     setState(() {
-                    //       _showHistory = true;
-                    //     });
-                    //   },
-                    //   child: const Text(
-                    //     'History',
-                    //     style: TextStyle(color: Color(0xFF3498DB)),
-                    //   ),
-                    // ),
                   ],
                 ),
               ),
               Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  itemCount: _contacts.length,
-                  itemBuilder: (context, index) {
-                    final contact = _contacts[index];
-                    return _buildContactItem(contact);
-                  },
-                ),
+                child: _callHistory.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'No call history',
+                          style: TextStyle(color: Color(0xFF8E9297)),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        itemCount: _callHistory.length,
+                        itemBuilder: (context, index) {
+                          final call = _callHistory[index];
+                          return _buildCallHistoryItemAsContact(call);
+                        },
+                      ),
               ),
             ],
           ),
@@ -253,7 +256,64 @@ class _CallsTabState extends NyState<CallsTab> {
     );
   }
 
-  Widget _buildContactItem(Contact contact) {
+  Widget _buildCallHistoryItemAsContact(UserCallsModel call) {
+    final chat = call.chat;
+    final sender = call.sender;
+    final baseUrl = getEnv('API_BASE_URL');
+    
+    // Determine name and userId based on chat type
+    String name;
+    int? userId;
+    
+    if (chat.type == 'GROUP' || chat.type == 'CHANNEL') {
+      // For group/channel: use chat name
+      name = chat.name ?? 'Unknown Group';
+      userId = null; // Groups don't have a single user avatar
+    } else {
+      // For private chat: use partner's name if current user is not the partner, else use creator
+      final currentUserId = Auth.data()?['id'];
+      if (currentUserId != null && chat.partner != null && chat.partner!.id != currentUserId) {
+        // Current user is not the partner, use partner's name and id
+        name = chat.partner!.username;
+        userId = chat.partner!.id;
+      } else if (chat.creator != null) {
+        // Use creator's name and id
+        name = chat.creator!.username;
+        userId = chat.creator!.id;
+      } else {
+        // Fallback to sender
+        name = sender.username;
+        userId = sender.id;
+      }
+    }
+    
+    // Build avatar URL using userId
+    final imagePath = userId != null ? '$baseUrl/uploads/$userId' : null;
+    
+    // Determine call type icon and color
+    final currentUserId = Auth.data()?['id'];
+    final isIncoming = currentUserId != null && call.senderId != currentUserId;
+    final isMissed = call.callStatus == 'MISSED';
+    final isDeclined = call.callStatus == 'DECLINED';
+    final isFailed = call.callStatus == 'FAILED';
+    
+    IconData callIcon;
+    Color callColor;
+    
+    if (isMissed || isDeclined) {
+      callIcon = Icons.call_received;
+      callColor = const Color(0xFFE74C3C);
+    } else if (isFailed) {
+      callIcon = Icons.call_end;
+      callColor = const Color(0xFFFF9800);
+    } else if (isIncoming) {
+      callIcon = Icons.call_received;
+      callColor = const Color(0xFF2ECC71);
+    } else {
+      callIcon = Icons.call_made;
+      callColor = Colors.grey;
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       child: Row(
@@ -264,9 +324,8 @@ class _CallsTabState extends NyState<CallsTab> {
                 onTap: () {
                   // Navigate to profile details page
                   routeTo(ProfileDetailsPage.path, data: {
-                    'userName': contact.name,
-                    'userImage': contact.image,
-                    'isOnline': contact.isOnline,
+                    'userName': name,
+                    'userImage': imagePath,
                     'description': '',
                   });
                 },
@@ -278,43 +337,66 @@ class _CallsTabState extends NyState<CallsTab> {
                     color: Colors.grey.shade700,
                   ),
                   child: ClipOval(
-                    child: Image.asset(
-                      contact.image,
-                      fit: BoxFit.cover,
-                    ).localAsset(),
+                    child: imagePath != null
+                        ? Image.network(
+                            imagePath,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Icon(Icons.person,
+                                  color: Colors.grey.shade500);
+                            },
+                          )
+                        : Icon(Icons.person, color: Colors.grey.shade500),
                   ),
                 ),
               ),
-              if (contact.isOnline)
-                Positioned(
-                  bottom: 2,
-                  right: 2,
-                  child: Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2ECC71),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Color(0xFF0F131B), width: 2),
-                    ),
-                  ),
-                ),
             ],
           ),
           const SizedBox(width: 16),
           Expanded(
-            child: Text(
-              contact.name,
-              style: const TextStyle(
-                color: Color(0xFFE8E7EA),
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: const TextStyle(
+                    color: Color(0xFFE8E7EA),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Icon(
+                      callIcon,
+                      size: 14,
+                      color: callColor,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      call.type == 'VIDEO_CALL' ? 'Video' : 'Voice',
+                      style: TextStyle(
+                        color: Colors.grey.shade400,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
           IconButton(
             onPressed: () {
-              routeTo(VoiceCallPage.path);
+              // Navigate to voice call with chat data
+              routeTo(VoiceCallPage.path, data: {
+                'chatId': call.chatId,
+                'partner': {
+                  'username': name,
+                  'avatar': imagePath,
+                },
+                'initiateCall': true,
+              });
             },
             icon: const Icon(
               Icons.call,
@@ -325,7 +407,15 @@ class _CallsTabState extends NyState<CallsTab> {
           const SizedBox(width: 8),
           IconButton(
             onPressed: () {
-              routeTo(VideoCallPage.path);
+              // Navigate to video call with chat data
+              routeTo(VideoCallPage.path, data: {
+                'chatId': call.chatId,
+                'partner': {
+                  'username': name,
+                  'avatar': imagePath,
+                },
+                'initiateCall': true,
+              });
             },
             icon: const Icon(
               Icons.videocam,
@@ -339,6 +429,12 @@ class _CallsTabState extends NyState<CallsTab> {
   }
 
   Widget _buildCallHistory() {
+    if (_isLoadingCalls) {
+      return const Center(
+        child: CircularProgressIndicator(color: Color(0xFF3498DB)),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -354,20 +450,87 @@ class _CallsTabState extends NyState<CallsTab> {
           ),
         ),
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            itemCount: _callHistory.length,
-            itemBuilder: (context, index) {
-              final call = _callHistory[index];
-              return _buildCallHistoryItem(call);
-            },
-          ),
+          child: _callHistory.isEmpty
+              ? const Center(
+                  child: Text(
+                    'No call history',
+                    style: TextStyle(color: Color(0xFF8E9297)),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  itemCount: _callHistory.length,
+                  itemBuilder: (context, index) {
+                    final call = _callHistory[index];
+                    return _buildCallHistoryItem(call);
+                  },
+                ),
         ),
       ],
     );
   }
 
-  Widget _buildCallHistoryItem(CallHistory call) {
+  Widget _buildCallHistoryItem(UserCallsModel call) {
+    final sender = call.sender;
+    final name = sender.username;
+    final avatar = sender.avatar;
+    final baseUrl = getEnv('API_BASE_URL');
+    final imagePath = '$baseUrl$avatar';
+    
+    // Format time
+    final now = DateTime.now();
+    final difference = now.difference(call.createdAt);
+    String timeText;
+    if (difference.inDays == 0) {
+      timeText = '${call.createdAt.hour}:${call.createdAt.minute.toString().padLeft(2, '0')}';
+    } else if (difference.inDays == 1) {
+      timeText = 'Yesterday';
+    } else if (difference.inDays < 7) {
+      timeText = '${difference.inDays}d ago';
+    } else {
+      timeText = '${call.createdAt.day}/${call.createdAt.month}';
+    }
+    
+    // Determine call type icon and color
+    final currentUserId = Auth.data()?['id'];
+    final isIncoming = currentUserId != null && call.senderId != currentUserId;
+    final isMissed = call.callStatus == 'MISSED';
+    final isDeclined = call.callStatus == 'DECLINED';
+    final isFailed = call.callStatus == 'FAILED';
+    
+    IconData callIcon;
+    Color callColor;
+    
+    if (isMissed || isDeclined) {
+      callIcon = Icons.call_received;
+      callColor = const Color(0xFFE74C3C);
+    } else if (isFailed) {
+      callIcon = Icons.call_end;
+      callColor = const Color(0xFFFF9800);
+    } else if (isIncoming) {
+      callIcon = Icons.call_received;
+      callColor = const Color(0xFF2ECC71);
+    } else {
+      callIcon = Icons.call_made;
+      callColor = Colors.grey;
+    }
+    
+    // Format duration
+    String durationText;
+    if (call.duration != null && call.duration! > 0) {
+      final minutes = call.duration! ~/ 60;
+      final seconds = call.duration! % 60;
+      durationText = '${minutes}m ${seconds}s';
+    } else if (isMissed) {
+      durationText = 'Missed';
+    } else if (isDeclined) {
+      durationText = 'Declined';
+    } else if (isFailed) {
+      durationText = 'Failed';
+    } else {
+      durationText = 'No duration';
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       child: Row(
@@ -376,8 +539,8 @@ class _CallsTabState extends NyState<CallsTab> {
             onTap: () {
               // Navigate to profile details page
               routeTo(ProfileDetailsPage.path, data: {
-                'userName': call.contact.name,
-                'userImage': call.contact.image,
+                'userName': name,
+                'userImage': imagePath,
                 'description': '',
               });
             },
@@ -389,10 +552,13 @@ class _CallsTabState extends NyState<CallsTab> {
                 color: Colors.grey.shade700,
               ),
               child: ClipOval(
-                child: Image.asset(
-                  call.contact.image,
+                child: Image.network(
+                  imagePath,
                   fit: BoxFit.cover,
-                ).localAsset(),
+                  errorBuilder: (context, error, stackTrace) {
+                    return Icon(Icons.person, color: Colors.grey.shade500);
+                  },
+                ),
               ),
             ),
           ),
@@ -401,39 +567,25 @@ class _CallsTabState extends NyState<CallsTab> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Text(
-                      call.contact.name,
-                      style: const TextStyle(
-                        color: Color(0xFFE8E7EA),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    if (call.count != null) ...[
-                      const SizedBox(width: 4),
-                      Text(
-                        '(${call.count})',
-                        style: const TextStyle(
-                          color: Color(0xFFE8E7EA),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ],
+                Text(
+                  name,
+                  style: const TextStyle(
+                    color: Color(0xFFE8E7EA),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Row(
                   children: [
                     Icon(
-                      _getCallIcon(call.type),
+                      callIcon,
                       size: 14,
-                      color: _getCallColor(call.type),
+                      color: callColor,
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      call.duration,
+                      durationText,
                       style: TextStyle(
                         color: Colors.grey.shade400,
                         fontSize: 14,
@@ -448,7 +600,7 @@ class _CallsTabState extends NyState<CallsTab> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                call.time,
+                timeText,
                 style: TextStyle(
                   color: Colors.grey.shade400,
                   fontSize: 14,
@@ -558,19 +710,26 @@ class _CallsTabState extends NyState<CallsTab> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              itemCount: 5,
+              itemCount: _chats.length > 5 ? 5 : _chats.length,
               itemBuilder: (context, index) {
-                final contact = _contacts[index];
-                final isSelected = _selectedContacts.contains(contact.name);
+                final chat = _chats[index];
+                final partner = chat.partner;
+                final name = partner?.username ?? chat.name;
+                final avatar = chat.avatar ?? partner?.avatar;
+                final baseUrl = getEnv('API_BASE_URL');
+                final imagePath = avatar != null ? '$baseUrl$avatar' : null;
+                final chatIdStr = chat.id.toString();
+                final isSelected = _selectedContacts.contains(chatIdStr);
+                
                 return Container(
                   margin: const EdgeInsets.only(right: 16),
                   child: GestureDetector(
                     onTap: () {
                       setState(() {
-                        if (_selectedContacts.contains(contact.name)) {
-                          _selectedContacts.remove(contact.name);
+                        if (_selectedContacts.contains(chatIdStr)) {
+                          _selectedContacts.remove(chatIdStr);
                         } else {
-                          _selectedContacts.add(contact.name);
+                          _selectedContacts.add(chatIdStr);
                         }
                       });
                     },
@@ -587,15 +746,21 @@ class _CallsTabState extends NyState<CallsTab> {
                                 : null,
                           ),
                           child: ClipOval(
-                            child: Image.asset(
-                              contact.image,
-                              fit: BoxFit.cover,
-                            ).localAsset(),
+                            child: imagePath != null
+                                ? Image.network(
+                                    imagePath,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return Icon(Icons.person,
+                                          color: Colors.grey.shade500);
+                                    },
+                                  )
+                                : Icon(Icons.person, color: Colors.grey.shade500),
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          contact.name,
+                          name,
                           style: TextStyle(
                             color: isSelected
                                 ? Color(0xFF57A1FF)
@@ -619,59 +784,22 @@ class _CallsTabState extends NyState<CallsTab> {
 
           const SizedBox(height: 20),
 
-          // Create New Call Link
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: const BoxDecoration(
-                    color: Colors.transparent,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.link,
-                    color: Color(0xFF57A1FF),
-                    size: 14,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                const Text(
-                  'Create New Call Link',
-                  style: TextStyle(
-                      color: Color(0xFF3498DB),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w300),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 24),
-
-          // Frequently Contacted section
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Frequently Contacted',
-                style: TextStyle(
-                  color: Color(0xFF82808F),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
           // Contacts list with alphabet scroll
           Expanded(
-            child: Stack(
+            child: _chats.isEmpty
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24.0),
+                      child: Text(
+                        'No contacts available',
+                        style: TextStyle(
+                          color: Color(0xFF8E9297),
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  )
+                : Stack(
               children: [
                 // Contacts list
                 ListView.builder(
@@ -698,9 +826,14 @@ class _CallsTabState extends NyState<CallsTab> {
                       );
                     } else {
                       // Contact item
-                      final contact = item['contact'] as Contact;
-                      final isSelected =
-                          _selectedContacts.contains(contact.name);
+                      final chat = item['contact'] as Chat;
+                      final partner = chat.partner;
+                      final name = partner?.username ?? chat.name;
+                      final avatar = chat.avatar ?? partner?.avatar;
+                      final baseUrl = getEnv('API_BASE_URL');
+                      final imagePath = avatar != null ? '$baseUrl$avatar' : null;
+                      final chatIdStr = chat.id.toString();
+                      final isSelected = _selectedContacts.contains(chatIdStr);
 
                       return Container(
                         margin:
@@ -709,9 +842,9 @@ class _CallsTabState extends NyState<CallsTab> {
                           onTap: () {
                             setState(() {
                               if (isSelected) {
-                                _selectedContacts.remove(contact.name);
+                                _selectedContacts.remove(chatIdStr);
                               } else {
-                                _selectedContacts.add(contact.name);
+                                _selectedContacts.add(chatIdStr);
                               }
                             });
                           },
@@ -729,16 +862,22 @@ class _CallsTabState extends NyState<CallsTab> {
                                       : null,
                                 ),
                                 child: ClipOval(
-                                  child: Image.asset(
-                                    contact.image,
-                                    fit: BoxFit.cover,
-                                  ).localAsset(),
+                                  child: imagePath != null
+                                      ? Image.network(
+                                          imagePath,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (context, error, stackTrace) {
+                                            return Icon(Icons.person,
+                                                color: Colors.grey.shade500);
+                                          },
+                                        )
+                                      : Icon(Icons.person, color: Colors.grey.shade500),
                                 ),
                               ),
                               const SizedBox(width: 12), // Reduced spacing
                               Expanded(
                                 child: Text(
-                                  contact.name,
+                                  name,
                                   style: TextStyle(
                                     color: isSelected
                                         ? Color(0xFF57A1FF)
@@ -752,10 +891,10 @@ class _CallsTabState extends NyState<CallsTab> {
                                 onTap: () {
                                   setState(() {
                                     if (isSelected) {
-                                      _selectedContacts.remove(contact.name);
+                                      _selectedContacts.remove(chatIdStr);
                                       print(_selectedContacts);
                                     } else {
-                                      _selectedContacts.add(contact.name);
+                                      _selectedContacts.add(chatIdStr);
                                       print(_selectedContacts);
                                     }
                                   });
@@ -921,15 +1060,20 @@ class _CallsTabState extends NyState<CallsTab> {
 
   // Helper methods to add to your class
   List<Map<String, dynamic>> _getSortedContactsWithHeaders() {
-    // Sort contacts by name
-    final sortedContacts = List<Contact>.from(_contacts)
-      ..sort((a, b) => a.name.compareTo(b.name));
+    // Filter to get only private chats (contacts) and sort by name
+    final contacts = _chats.where((chat) => chat.type == 'PRIVATE').toList();
+    contacts.sort((a, b) {
+      final nameA = a.partner?.username ?? a.name;
+      final nameB = b.partner?.username ?? b.name;
+      return nameA.compareTo(nameB);
+    });
 
     List<Map<String, dynamic>> result = [];
     String currentLetter = '';
 
-    for (final contact in sortedContacts) {
-      final firstLetter = contact.name[0].toUpperCase();
+    for (final chat in contacts) {
+      final name = chat.partner?.username ?? chat.name;
+      final firstLetter = name[0].toUpperCase();
       if (firstLetter != currentLetter) {
         // Add section header
         result.add({
@@ -941,7 +1085,7 @@ class _CallsTabState extends NyState<CallsTab> {
       // Add contact
       result.add({
         'isHeader': false,
-        'contact': contact,
+        'contact': chat,
       });
     }
 
@@ -950,8 +1094,10 @@ class _CallsTabState extends NyState<CallsTab> {
 
   List<String> _getAlphabetLetters() {
     final letters = <String>{};
-    for (final contact in _contacts) {
-      letters.add(contact.name[0].toUpperCase());
+    final contacts = _chats.where((chat) => chat.type == 'PRIVATE').toList();
+    for (final chat in contacts) {
+      final name = chat.partner?.username ?? chat.name;
+      letters.add(name[0].toUpperCase());
     }
     return letters.toList()..sort();
   }
@@ -961,55 +1107,3 @@ class _CallsTabState extends NyState<CallsTab> {
     // This would require a ScrollController and calculating positions
   }
 }
-
-IconData _getCallIcon(CallType type) {
-  switch (type) {
-    case CallType.incoming:
-      return Icons.call_received;
-    case CallType.outgoing:
-      return Icons.call_made;
-    case CallType.missed:
-      return Icons.call_received;
-  }
-}
-
-Color _getCallColor(CallType type) {
-  switch (type) {
-    case CallType.incoming:
-      return const Color(0xFF2ECC71);
-    case CallType.outgoing:
-      return Colors.grey;
-    case CallType.missed:
-      return const Color(0xFFE74C3C);
-  }
-}
-
-class Contact {
-  final String name;
-  final String image;
-  final bool isOnline;
-
-  Contact({
-    required this.name,
-    required this.image,
-    this.isOnline = false,
-  });
-}
-
-class CallHistory {
-  final Contact contact;
-  final String time;
-  final CallType type;
-  final String duration;
-  final int? count;
-
-  CallHistory({
-    required this.contact,
-    required this.time,
-    required this.type,
-    required this.duration,
-    this.count,
-  });
-}
-
-enum CallType { incoming, outgoing, missed }

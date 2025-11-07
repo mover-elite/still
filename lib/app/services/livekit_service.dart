@@ -267,7 +267,7 @@ class LiveKitService {
 
       
       if(sendDeclineNotification && _currentChatId != null){
-        WebSocketService().sendDeclineCall(_currentChatId!, "audio");
+        WebSocketService().sendDeclineCall(_currentChatId!, "audio", _currentCallId!);
       }
 
       // Cleanup room

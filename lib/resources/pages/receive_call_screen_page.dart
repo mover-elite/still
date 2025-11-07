@@ -251,7 +251,7 @@ class _ReceiveCallScreenPageState extends NyPage<ReceiveCallScreenPage>
     // Clear call tracking when declining
     ChatService().clearIncomingCall(chatID, callId);
 
-    WebSocketService().sendDeclineCall(chatID, "audio");
+    WebSocketService().sendDeclineCall(chatID, "audio", callId);
     Navigator.pop(context);
   }
 
