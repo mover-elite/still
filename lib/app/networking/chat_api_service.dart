@@ -121,12 +121,13 @@ class ChatApiService extends ApiService {
     );
   }
 
-  Future<CallResponse?> joinVideoCall(int chatId) async {
+  Future<CallResponse?> joinVideoCall(int chatId, String callId) async {
     return await network<CallResponse>(
       request: (request) => request.post(
         "/call/video-call/join",
         data: {
           "chatId": chatId,
+          "callId": callId,
         },
       ),
     );
