@@ -1,13 +1,25 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/app/networking/chat_api_service.dart';
+import 'package:flutter_app/app/services/callkit_service.dart';
+import 'package:flutter_app/firebase_options.dart';
+import 'package:flutter_callkit_incoming/entities/android_params.dart';
+import 'package:flutter_callkit_incoming/entities/call_kit_params.dart';
+import 'package:flutter_callkit_incoming/entities/ios_params.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import "package:flutter_callkit_incoming/flutter_callkit_incoming.dart";
 
 class NotificationService with WidgetsBindingObserver {
   NotificationService._();
   static final NotificationService instance = NotificationService._();
 
   final FlutterLocalNotificationsPlugin _fln = FlutterLocalNotificationsPlugin();
+  final  _firebaseMessaging = FirebaseMessaging.instance;
+  
   bool _isInitialized = false;
   bool _isForeground = true;
 
@@ -18,20 +30,101 @@ class NotificationService with WidgetsBindingObserver {
   Stream<Map<String, dynamic>> get onCallAction => _callActionController.stream;
 
   bool get isAppInForeground => _isForeground;
+  
+  Future <void> initFCM() async {
+    print("Initializing FCM...");
+    await _firebaseMessaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+      announcement: true,
+    );
 
+    // final apnsToken = await FirebaseMessaging.instance.getAPNSToken();
+    // print('APNs Token: $apnsToken');
+    final fcmToken = await _firebaseMessaging.getToken();
+    print('FCM Token $fcmToken',);
+    
+    if(fcmToken != null){
+      ChatApiService().updateFcmToken(fcmToken).then((value) => {
+        print('FCM Token sent to server successfully: ${value?.message}'),
+      }).catchError((error) {
+        print('Error sending FCM Token to server: $error');
+      });
+    }
+      
+      
+    
+    FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
+      print('FCM Token refreshed: $newToken');
+      ChatApiService().updateFcmToken(newToken).then((value) => {
+        print('FCM Token sent to server successfully: ${value?.message}'),
+      }).catchError((error) {
+        print('Error sending FCM Token to server: $error');
+      });
+    });
+    
+    // Handle foreground messages, user actively using the app
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      print("Received message in the foreground:");
+      print('Received foreground message: ${message.messageId}');
+      // final notification = message.notification;
+      
+
+      // if (notification != null) {
+      //   final title = notification.title ?? 'New Message';
+      //   final body = notification.body ?? '';
+      //   final chatId = int.tryParse(message.data['chatId'] ?? '');
+      //   if (chatId != null) {
+      //     showChatMessageNotification(
+      //       chatId: chatId,
+      //       title: title,
+      //       body: body,
+      //     );
+      //   }
+      // }
+    }, onError: (error) {
+      print('Error receiving foreground message: $error');
+    });
+
+    // Handle notification taps when app is in background or terminated, user tap the notification and app opens
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      print("Received message from notification tap:");
+      print('Notification caused app to open: ${message.messageId}');
+      print('Message data: ${message.data}');
+      final chatId = int.tryParse(message.data['chatId'] ?? '');
+      final type = message.data['type'] ?? 'message';
+      
+      if (chatId != null && type == 'message') {
+        print("Routing to chatId: $chatId");
+        _tapController.add(chatId);
+      }
+    }, onError: (error) {
+      print('Error handling notification tap: $error');
+    });
+
+
+    // Handle background messages, when the app is terminated 
+    // FirebaseMessaging.onBackgroundMessage(_backgroundMessageHandler);
+
+
+  }
+  
   Future<void> init() async {
     if (_isInitialized) return;
-
+    await initFCM();
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosInit = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
+      
     );
 
     await _fln.initialize(
       const InitializationSettings(android: androidInit, iOS: iosInit),
       onDidReceiveNotificationResponse: (resp) {
+        print('📲 Notification tapped: ${resp.payload}');
         final payload = resp.payload;
         if (payload != null) {
           // Handle call notifications
@@ -41,6 +134,7 @@ class NotificationService with WidgetsBindingObserver {
               final chatId = int.tryParse(parts[1]);
               final callerId = int.tryParse(parts[2]);
               final callType = parts[3];
+              final callId = parts[4];
               
               if (chatId != null && callerId != null) {
                 final action = resp.actionId ?? 'open';
@@ -49,11 +143,13 @@ class NotificationService with WidgetsBindingObserver {
                   'chatId': chatId,
                   'callerId': callerId,
                   'callType': callType,
+                  "callId": callId
                 });
               }
             }
           } else {
             // Handle regular message notifications
+            print("Notification tapped with payload: $payload");
             final id = int.tryParse(payload);
             if (id != null) _tapController.add(id);
           }
@@ -127,6 +223,7 @@ class NotificationService with WidgetsBindingObserver {
     required int callerId,
     required String callerName,
     required String callType, // 'audio' or 'video'
+    required String callId,
   }) async {
     final android = AndroidNotificationDetails(
       'calls',
@@ -165,13 +262,31 @@ class NotificationService with WidgetsBindingObserver {
     );
 
     final notificationId = chatId; // Use chatId as notification ID for easy tracking
-    await _fln.show(
-      notificationId,
-      callType == 'audio' ? '📞 Incoming Call' : '📹 Incoming Video Call',
-      '$callerName is calling...',
-      NotificationDetails(android: android, iOS: ios),
-      payload: 'call:$chatId:$callerId:$callType',
-    );
+    // FlutterCallkitIncoming
+    print("Showing notifications");
+    
+  
+    try{
+      await CallKitService().showIncomingCall(
+        chatId: chatId,
+        callerId: callerId,
+        callerName: callerName,
+        callType: callType,
+        callUUID: callId,
+        handle: callerName,
+      );
+    }catch(e){
+      print("Error showing CallKit incoming call: $e");
+    }
+    
+    // await _fln.show(
+    //   notificationId,
+      
+    //   callType == 'audio' ? '📞 Incoming Call' : '📹 Incoming Video Call',
+    //   '$callerName is calling...',
+    //   NotificationDetails(android: android, iOS: ios),
+    //   payload: 'call:$chatId:$callerId:$callType:$callerId',
+    // );
   }
 
   Future<void> cancelCallNotification(int chatId, String callId) async {
@@ -193,4 +308,17 @@ class NotificationService with WidgetsBindingObserver {
 @pragma('vm:entry-point')
 void notificationTapBackground(NotificationResponse response) {
   // No-op. onDidReceiveNotificationResponse will handle routing when app resumes.
+  print('📲 Background notification tapped: ${response.payload}');
+}
+
+@pragma('vm:entry-point')
+Future<void> _backgroundMessageHandler(RemoteMessage message) async {
+  // await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // await NotificationService.instance.init();
+   await Firebase.initializeApp();
+  
+  print('🔄 Background message received: in notification_service.dart ${message.messageId}');
+  print('   Title: ${message.notification?.title}');
+  print('   Body: ${message.notification?.body}');
+  print('   Data: ${message.data}');
 }

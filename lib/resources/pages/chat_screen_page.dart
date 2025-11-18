@@ -205,6 +205,7 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
         // print("Chat id is: ${_chat!.id}");
         // print("$highestId");
         await WebSocketService().sendReadReceipt(highestId, _chat!.id);
+        print("✅ Read receipt sent for messages: $highestId");
         print('✅ Read receipts sent for messages: $unreadMessageIds');
       } catch (e) {
         print('❌ Error sending read receipts: $e');
@@ -1155,24 +1156,32 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
  void _scrollToBottomInitial() {
    WidgetsBinding.instance.addPostFrameCallback((_) async {
      // Wait longer for initial render as there might be many messages
-     await Future.delayed(const Duration(milliseconds: 400));
+     await Future.delayed(const Duration(milliseconds: 100));
      
      if (mounted && _scrollController.hasClients) {
        try {
          // Jump to bottom immediately for initial load
          final maxExtent = _scrollController.position.maxScrollExtent;
-         _scrollController.jumpTo(maxExtent);
+         _scrollController.animateTo(
+           maxExtent,
+           duration: const Duration(milliseconds: 700),
+           curve: Curves.easeOutCubic,
+         );
          
          // Multiple verification attempts to ensure we reach the bottom
          for (int i = 0; i < 5; i++) {
-           await Future.delayed(Duration(milliseconds: 150 * (i + 1)));
+           await Future.delayed(Duration(milliseconds: 300 * (i + 1)));
            if (mounted && _scrollController.hasClients) {
              final currentMaxExtent = _scrollController.position.maxScrollExtent;
              final currentPosition = _scrollController.position.pixels;
              
              // If not at bottom or extent changed, scroll again
              if (currentPosition < currentMaxExtent - 2 || currentMaxExtent != maxExtent) {
-               _scrollController.jumpTo(currentMaxExtent);
+               _scrollController.animateTo(
+                  currentMaxExtent,
+                  duration: const Duration(milliseconds: 700),
+                  curve: Curves.easeOut,
+                );
              } else {
                break; // We've reached the stable bottom
              }
@@ -1184,7 +1193,11 @@ class _ChatScreenPageState extends NyPage<ChatScreenPage>
            await Future.delayed(Duration(milliseconds: 200 * (i + 1)));
            if (mounted && _scrollController.hasClients) {
              try {
-               _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+               _scrollController.animateTo(
+                 _scrollController.position.maxScrollExtent,
+                 duration: const Duration(milliseconds: 700),
+                 curve: Curves.easeOut,
+               );
                break;
              } catch (e) {
                continue;

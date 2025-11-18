@@ -52,6 +52,8 @@ dependencies:
   open_filex: ^4.5.0
   flutter_callkit_incoming: ^3.0.0
   uuid: ^4.5.1
+  firebase_messaging: ^16.0.4
+  firebase_core: ^4.2.1
 
 
 dev_dependencies:

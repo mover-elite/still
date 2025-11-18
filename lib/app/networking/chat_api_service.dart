@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/app/models/chat_links_response.dart';
 import 'package:flutter_app/app/models/chat_messages_response.dart';
+import 'package:flutter_app/app/models/fcm_token_response_model.dart';
 import 'package:flutter_app/app/models/media_response.dart';
 import 'package:flutter_app/app/models/user.dart';
 import 'package:flutter_app/app/models/user_calls_model.dart';
@@ -461,5 +462,17 @@ class ChatApiService extends ApiService {
       request: (request) => request.get("/call"),
     );
   }
+
+  Future<FcmTokenResponseModel?> updateFcmToken(String fcmToken) async {
+    return await network<FcmTokenResponseModel>(
+      request: (request) => request.put(
+        "/user/fcm-token",
+        data: {
+          "fcmToken": fcmToken,
+        },
+      ),
+    );
+  }
+
 
 }

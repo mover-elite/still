@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "55988169456",
+    "project_id": "stillur-55793",
+    "storage_bucket": "stillur-55793.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:55988169456:android:f78d84217fdce69494f035",
+        "android_client_info": {
+          "package_name": "com.nylo.flutter_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA3gqTxOkrkh4FcBIzWqyG3XskjKNncFc0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

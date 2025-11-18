@@ -423,23 +423,23 @@ class ChatService {
       }
 
       // If app is backgrounded and chat is not active, show a local notification
-      final shouldNotify = !NotificationService.instance.isAppInForeground &&
-          !_activeChatScreens.contains(message.chatId) &&
-          !isMessageFromCurrentUser; // Don't notify for own messages
-      if (shouldNotify) {
-        final chat = _chats[message.chatId];
-        final title = chat?.name ?? 'New message';
-        final text = (message.text?.isNotEmpty ?? false)
-            ? message.text!
-            : (message.caption?.isNotEmpty ?? false)
-                ? message.caption!
-                : (message.type.toUpperCase());
-        NotificationService.instance.showChatMessageNotification(
-          chatId: message.chatId,
-          title: title,
-          body: text,
-        );
-      }
+      // final shouldNotify = !NotificationService.instance.isAppInForeground &&
+      //     !_activeChatScreens.contains(message.chatId) &&
+      //     !isMessageFromCurrentUser; // Don't notify for own messages
+      // if (shouldNotify) {
+      //   final chat = _chats[message.chatId];
+      //   final title = chat?.name ?? 'New message';
+      //   final text = (message.text?.isNotEmpty ?? false)
+      //       ? message.text!
+      //       : (message.caption?.isNotEmpty ?? false)
+      //           ? message.caption!
+      //           : (message.type.toUpperCase());
+      //   NotificationService.instance.showChatMessageNotification(
+      //     chatId: message.chatId,
+      //     title: title,
+      //     body: text,
+      //   );
+      // }
 
       // Add to local message cache only for chats without active screens
       _chatMessages[message.chatId]!.add(message);
@@ -567,13 +567,15 @@ class ChatService {
           'callId': callId,
           'initiateCall': false, // This indicates joining, not initiating
           'isJoining': true, // Flag to indicate this is an incoming call
+          
         };
         
         // Check if app is in foreground
         if (NotificationService.instance.isAppInForeground) {
           // App is in foreground, show the full-screen call UI
           if (type == "audio") {
-            await routeTo("/receive-call-screen", data: callData);
+            await NotificationService.instance.showIncomingCallNotification(chatId: chatId, callerId: callerId, callerName: chat.name, callType: "audio", callId: callId);
+            // await routeTo("/receive-call-screen", data: callData);
           } else {
             await routeTo("/receive-video-call-screen", data: callData);
           }
@@ -638,6 +640,7 @@ class ChatService {
   /// Handle call notification actions (accept/decline from notification)
   void _handleCallAction(Map<String, dynamic> actionData) async {
     try {
+      print("Handling call action from notification: $actionData");
       final action = actionData['action'];
       final chatId = actionData['chatId'];
       final callerId = actionData['callerId'];
@@ -671,6 +674,7 @@ class ChatService {
             'callerId': callerId,
             'initiateCall': false,
             'isJoining': true,
+            'callId': callId,
           };
           
           // Navigate to the appropriate call screen

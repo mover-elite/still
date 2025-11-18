@@ -30,6 +30,10 @@ class LiveKitService {
   EventsListener<RoomEvent>? _listener;
   bool _isConnecting = false;
   
+  // Track enable preferences (set before connecting, used after RoomConnectedEvent)
+  bool _enableAudio = true;
+  bool _enableVideo = false;
+  
   // Current call metadata (persists beyond UI lifecycle)
   
   String? _currentCallId;
@@ -227,13 +231,9 @@ class LiveKitService {
 
       
 
-      // Enable audio/video if requested
-      if (enableAudio) {
-        await setMicrophoneEnabled(true);
-      }
-      if (enableVideo) {
-        await setCameraEnabled(true);
-      }
+      // Store track preferences for use in room listeners
+      _enableAudio = enableAudio;
+      _enableVideo = enableVideo;
 
       // Start tracking call duration
       _startDurationTimer();
@@ -317,6 +317,8 @@ class LiveKitService {
         _callDuration = 0;
         _startTime = null;
         _participantHistory.clear();
+        _enableAudio = true;
+        _enableVideo = false;
         // Reset call status
         print('📞 [STATUS CHANGE] Setting status to IDLE (cleanup)');
         _updateCallStatus(CallStatus.ended);
@@ -335,6 +337,8 @@ class LiveKitService {
         _currentCallType = null;
         _currentCallData = null;
         _isJoining = false;
+        _enableAudio = true;
+        _enableVideo = false;
         
         _startTime = null;
         
@@ -358,6 +362,14 @@ class LiveKitService {
         print('✅ Room connected event');
         _captureRoomInfo();
         
+        // Enable audio/video now that room is connected
+        if (_enableAudio) {
+          _room?.localParticipant?.setMicrophoneEnabled(true);
+        }
+        if (_enableVideo) {
+          _room?.localParticipant?.setCameraEnabled(true);
+        }
+        
         // Sync existing participants if any
         if (_room != null && _room!.remoteParticipants.isNotEmpty) {
           _remoteParticipants.addAll(_room!.remoteParticipants.values);
@@ -379,7 +391,6 @@ class LiveKitService {
           updateCallStatus(CallStatus.ringing);
         }
         
-
 
       })
       ..on<RoomDisconnectedEvent>((event) {
