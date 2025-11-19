@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_app/app/networking/websocket_service.dart';
 import 'package:flutter_app/app/models/livekit_events.dart';
+import 'package:flutter_app/app/services/call_handling_service.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:audioplayers/audioplayers.dart';
 
@@ -188,7 +189,20 @@ class LiveKitService {
       await _ensureRoomCleanup();
 
       // Create fresh room instance
-      _room = Room();
+      _room = Room(roomOptions: RoomOptions(
+        adaptiveStream: true,
+        dynacast: true,
+      ));
+
+
+      if (_enableAudio) {
+        await _room!.localParticipant?.setMicrophoneEnabled(true);
+        print('🎤 Microphone enabled before connection');
+      }
+      if (_enableVideo) {
+        await _room!.localParticipant?.setCameraEnabled(true);
+        print('📹 Camera enabled before connection');
+      }
 
       // Setup event listeners
       _setupRoomListeners();
@@ -205,7 +219,9 @@ class LiveKitService {
         token,
         connectOptions: ConnectOptions(
           autoSubscribe: autoSubscribe,
+          
         ),
+        
       );
 
       print('✅ Connected to LiveKit room');
@@ -230,7 +246,7 @@ class LiveKitService {
       // }
 
       
-
+      print("Video enabled on connect: $enableVideo");
       // Store track preferences for use in room listeners
       _enableAudio = enableAudio;
       _enableVideo = enableVideo;
@@ -253,7 +269,12 @@ class LiveKitService {
   /// 
   /// Parameters:
   /// - [reason]: Optional reason for disconnection (for analytics)
-  Future<void> disconnect({String reason = 'User ended call', bool sendDeclineNotification = false}) async {
+  Future<void> disconnect({
+    String reason = 'User ended call', 
+    bool sendDeclineNotification = false,
+    String? callId,
+
+    }) async {
     if (_room == null) {
       print('⚠️ No active room to disconnect from');
       return;
@@ -265,9 +286,18 @@ class LiveKitService {
       // Capture disconnection info before cleanup
       _captureDisconnectionInfo(reason);
 
+      if(_currentCallId != null){
+        CallHandlingService().endActiveCall(callUUID:   _currentCallId ?? '');
+      }
+      if(callId != null){
+        CallHandlingService().endActiveCall(callUUID: callId);
+      }
       
       if(sendDeclineNotification && _currentChatId != null){
         WebSocketService().sendDeclineCall(_currentChatId!, "audio", _currentCallId!);
+      }
+      if(sendDeclineNotification && callId != null){
+        WebSocketService().sendDeclineCall(_currentChatId!, "audio", callId);
       }
 
       // Cleanup room

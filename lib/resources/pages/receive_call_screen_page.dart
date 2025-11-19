@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/app/networking/websocket_service.dart';
+import 'package:flutter_app/app/services/callkit_service.dart';
 import 'package:flutter_app/app/services/chat_service.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
@@ -227,7 +228,7 @@ class _ReceiveCallScreenPageState extends NyPage<ReceiveCallScreenPage>
     final callerId = navigationData['callerId'];
     final callId = navigationData['callId'];
     ChatService().clearIncomingCall(chatId, callId);
-    
+    CallKitService().setCallStarted(callId);
     Navigator.pop(context);
     await routeTo(
       "/voice-call",

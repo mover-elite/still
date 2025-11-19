@@ -87,6 +87,10 @@ class CallKitService {
     print('🟢 ✅ CallKit event listeners setup complete');
   }
 
+  void setCallStarted(String callId) async {
+    await FlutterCallkitIncoming.setCallConnected(callId);
+  }
+
   /// Handle call accept event
   void _handleCallAccept(CallEvent? event) {
     try {

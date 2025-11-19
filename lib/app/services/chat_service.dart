@@ -575,8 +575,9 @@ class ChatService {
           // App is in foreground, show the full-screen call UI
           if (type == "audio") {
             await NotificationService.instance.showIncomingCallNotification(chatId: chatId, callerId: callerId, callerName: chat.name, callType: "audio", callId: callId);
-            // await routeTo("/receive-call-screen", data: callData);
+            await routeTo("/receive-call-screen", data: callData);
           } else {
+            await NotificationService.instance.showIncomingCallNotification(chatId: chatId, callerId: callerId, callerName: chat.name, callType: "video", callId: callId);
             await routeTo("/receive-video-call-screen", data: callData);
           }
           print('📞 Call screen opened for: $callKey (tracking will be cleared on call end)');

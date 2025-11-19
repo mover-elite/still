@@ -1,6 +1,6 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/widgets.dart';
-import 'package:flutter_app/app/services/callkit_service.dart';
+import 'package:flutter_app/app/services/call_handling_service.dart';
 import 'package:flutter_app/firebase_options.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'bootstrap/boot.dart';
@@ -74,10 +74,11 @@ void main() async {
   await NotificationService.instance.init();
   
   print("Initializing Notification Service...");
-  // await NotificationService.instance.requestPermission();
-  // await NotificationService.instance.setupFlutterNotifications();
-  // await NotificationService.instance.setupFCMListeners();
-  // await NotificationService.instance.initFCM();
+  
+  // Initialize Call Handling Service - coordinates all call events
+  print("Initializing Call Handling Service...");
+  await CallHandlingService().initialize();
+  
   // Handle notification taps to open chat
   NotificationService.instance.onNotificationTap.listen((chatId) async {
     final chat = await ChatService().getChatDetails(chatId);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/app/networking/chat_api_service.dart';
+import 'package:flutter_app/app/services/call_handling_service.dart';
 import 'package:flutter_app/app/services/livekit_service.dart';
 import 'package:flutter_app/app/models/livekit_events.dart';
 import 'package:livekit_client/livekit_client.dart';
@@ -449,7 +450,7 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
 
       // Disconnect via LiveKitService
       await _liveKitService.disconnect(reason: 'User ended call', sendDeclineNotification: true);
-      
+      // CallHandlingService().endCall();
       // Safely pop the navigator
       print("Can pop navigator: ${Navigator.canPop(context)}");
       if (mounted && Navigator.canPop(context)) {
