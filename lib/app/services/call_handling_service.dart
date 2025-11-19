@@ -376,9 +376,11 @@ class CallHandlingService {
     required String recipientName,
     required String callType, // 'audio' or 'video'
     required String token, // LiveKit token from server
+    bool isGroupCall = false, // New parameter for group calls
   }) async {
     try {
       print('🟢 📞 Initiating outgoing call...');
+      print('   Is Group Call: $isGroupCall');
 
       // Generate call UUID
       final callUUID = CallKitService.generateCallUUID();
@@ -400,7 +402,7 @@ class CallHandlingService {
       print('🔵 Connecting to LiveKit room...');
       await _liveKitService.connect(
         token: token,
-        callType: callType == 'video' ? CallType.single : CallType.single,
+        callType: isGroupCall ? CallType.group : CallType.single,
         callId: callUUID,
         chatId: chatId,
         enableAudio: true,
@@ -416,6 +418,8 @@ class CallHandlingService {
           'callId': callUUID,
           'callType': 'video',
           'isIncoming': false,
+          'isGroup': isGroupCall,
+          'initiateCall': true,
         });
       } else {
         await routeTo(VoiceCallPage.path, data: {
@@ -423,6 +427,8 @@ class CallHandlingService {
           'callId': callUUID,
           'callType': 'audio',
           'isIncoming': false,
+          'isGroup': isGroupCall,
+          'initiateCall': true,
         });
       }
       print('🟢 ✅ Navigated to call screen');

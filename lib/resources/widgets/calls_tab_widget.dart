@@ -427,13 +427,18 @@ class _CallsTabState extends NyState<CallsTab> {
           IconButton(
             onPressed: () {
               // Navigate to voice call with chat data
+              final isGroup = call.chat.type == 'CHANNEL' || call.chat.type == 'GROUP';
               routeTo(VoiceCallPage.path, data: {
                 'chatId': call.chatId,
                 'partner': {
                   'username': name,
                   'avatar': imagePath,
                 },
+                'isGroup': isGroup,
                 'initiateCall': true,
+                'avatar': imagePath,
+                'groupName': isGroup ? call.chat.name : null,
+                'groupImage': isGroup ? imagePath : null,
               });
             },
             icon: const Icon(
@@ -446,13 +451,18 @@ class _CallsTabState extends NyState<CallsTab> {
           IconButton(
             onPressed: () {
               // Navigate to video call with chat data
+              final isGroup = call.chat.type == 'CHANNEL' || call.chat.type == 'GROUP';
               routeTo(VideoCallPage.path, data: {
                 'chatId': call.chatId,
                 'partner': {
                   'username': name,
                   'avatar': imagePath,
                 },
+                'isGroup': isGroup,
                 'initiateCall': true,
+                'avatar': imagePath,
+                'groupName': isGroup ? call.chat.name : null,
+                'groupImage': isGroup ? imagePath : null,
               });
             },
             icon: const Icon(

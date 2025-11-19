@@ -535,7 +535,7 @@ class LiveKitService {
       final videoTrack = _room!.localParticipant!.videoTrackPublications.firstOrNull?.track;
       if (videoTrack is LocalVideoTrack) {
         // Toggle between front and back camera
-        await videoTrack.setCameraPosition(CameraPosition.front);
+        await videoTrack.setCameraPosition(CameraPosition.back);
         print('📹 Camera switched');
       } else {
         print('⚠️ No video track to switch camera');
@@ -628,6 +628,7 @@ class LiveKitService {
 
     _participantHistory.add(participantInfo);
     print('👤 Participant $action: ${participant.name}');
+    print('${participant}');
   }
 
   /// Get call summary

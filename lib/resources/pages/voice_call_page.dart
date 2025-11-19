@@ -16,11 +16,13 @@ class CallParticipant {
   final String name;
   final String image;
   final bool isSelf;
+  final bool isMuted;
 
   CallParticipant({
     required this.name,
     required this.image,
     this.isSelf = false,
+    this.isMuted = false,
   });
 }
 
@@ -41,6 +43,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   bool _isSpeaker = false;
   bool _isVideoOn = false;
   int _callDuration = 0;
+  bool _remoteParticipantMuted = false; // Track remote participant mute status for single calls
   
   CallType _callType = CallType.single;
   bool _isEndingCall = false;
@@ -151,6 +154,10 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         _startRingingAnimations();
       } else if (status == CallStatus.connected) {
         _stopAllAnimations();
+        // ✅ Sync participants when call becomes connected
+        if (_callType == CallType.group) {
+          _syncParticipants();
+        }
       } else if (status == CallStatus.ended) {
         print("Ending call in the page due to LiveKitService status ended");
         _endCall(); 
@@ -205,6 +212,10 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
           break;
         case ConnectionStateType.reconnected:
           print('✅ Room reconnected');
+          // ✅ Sync participants after reconnection
+          if (_callType == CallType.group) {
+            _syncParticipants();
+          }
           break;
       }
     });
@@ -216,11 +227,10 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       switch (event.type) {
         case ParticipantChangeType.connected:
           print('👤 Participant connected: ${event.participant.name}');
-          // setState(() {
-          //   _callState = CallState.connected;
-          // });
-          // _syncParticipants();
-          // _stopAllAnimations();
+          // ✅ Sync participants when remote participant connects
+          if (_callType == CallType.group) {
+            _syncParticipants();
+          }
           break;
 
         case ParticipantChangeType.disconnected:
@@ -242,6 +252,11 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
           _callDuration = _liveKitService.callDuration;
           // Sync mute state from LiveKitService
           _isMuted = !_liveKitService.isMicrophoneEnabled;
+          
+          // For single calls, track remote participant mute status
+          if (_callType == CallType.single && _liveKitService.remoteParticipants.isNotEmpty) {
+            _remoteParticipantMuted = !_liveKitService.remoteParticipants.first.isMicrophoneEnabled();
+          }
         });
         
         // Update the overlay banner if it's showing
@@ -249,8 +264,19 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
           CallOverlayService().updateDuration(_formatDuration(_callDuration));
           CallOverlayService().updateMuteState(_isMuted);
         }
+        
+        // ✅ Sync participants to reflect mute status changes
+        if (_callType == CallType.group) {
+          _syncParticipants();
+        }
       }
     });
+  }
+
+  String getUserAvatar(String userId) {
+    final baseUrl  = getEnv("API_BASE_URL");
+    return '$baseUrl/uploads/${userId}';
+
   }
 
   void _extractCallData() async {
@@ -309,12 +335,16 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       if (navigationData['isGroup'] == true) {
         _callType = CallType.group;
         
-        final groupInfo = await ChatService().getChatDetails(_chatId!);
-        if(groupInfo != null){
-          _groupName = groupInfo.name;
+        // Try to get groupName from navigation data first, then fetch from ChatService
+        _groupName = navigationData['groupName'] ?? '';
+        if (_groupName.isEmpty) {
+          final groupInfo = await ChatService().getChatDetails(_chatId!);
+          if(groupInfo != null){
+            _groupName = groupInfo.name;
+          }
         }
         
-        _groupImage = navigationData['avatar'] ?? _groupImage;
+        _groupImage = navigationData['groupImage'] ?? navigationData['avatar'] ?? _groupImage;
         
         print("_groupName: $_groupName, _groupImage: $_groupImage");
         _callerId =
@@ -396,11 +426,13 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
 
     // Add local participant (self)
     final user = Auth.data();
+    
     if (user != null) {
       newParticipants.add(CallParticipant(
         name: "You",
-        image: user['avatar'] ?? "image6.png",
         isSelf: true,
+        image: getUserAvatar(user['id']!.toString()).toString(),
+        isMuted: _isMuted, // Track self mute status
       ));
     }
 
@@ -408,8 +440,10 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
     for (var remoteParticipant in _liveKitService.remoteParticipants) {
       newParticipants.add(CallParticipant(
         name: remoteParticipant.name,
-        image: "default_avatar.png",
+        // image: "default_avatar.png",
         isSelf: false,
+        image: getUserAvatar(remoteParticipant.identity).toString(),
+        isMuted: !remoteParticipant.isMicrophoneEnabled(), // Track remote mute status
       ));
     }
 
@@ -574,6 +608,9 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       if (CallOverlayService().currentState != null) {
         CallOverlayService().updateMuteState(_isMuted);
       }
+      
+      // ✅ Sync participants to update mute indicator
+      _syncParticipants();
     }
   }
 
@@ -850,10 +887,13 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
                 shape: BoxShape.circle,
               ),
               child: ClipOval(
-                child: Image.asset(
-                  _groupImage,
+                child: Image.network(
+                  getUserAvatar(_chatId!.toString()),
                   fit: BoxFit.cover,
-                ).localAsset(),
+                  errorBuilder: (context, error, stackTrace) {
+                    return Icon(Icons.person, color: Colors.grey.shade500);
+                  },
+                ),
               ),
             ),
             const SizedBox(width: 12),
@@ -931,37 +971,59 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
           builder: (context, child) {
             return Transform.scale(
               scale: _pulseAnimation.value,
-              child: Container(
-                width: 120,
-                height: 120,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: _callState == CallState.ringing
-                      ? [
-                          BoxShadow(
-                            color: Color(0xFFE8E7EA).withOpacity(0.3),
-                            blurRadius: 20,
-                            spreadRadius: 5,
-                          ),
-                        ]
-                      : [],
-                ),
-                child: ClipOval(
-                  child: 
-                  (_contactImage != null)
-                      ?
-                       Image.network(
-                            "${getEnv('API_BASE_URL')}$_contactImage",
-                          fit: BoxFit.cover,
-                          
-                        )
-                      : Image.asset(
-                          defaultImage,
-                          fit: BoxFit.cover,
-                        ).localAsset()
-                ),
-                ),
-              
+              child: Stack(
+                alignment: Alignment.bottomRight,
+                children: [
+                  Container(
+                    width: 120,
+                    height: 120,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: _callState == CallState.ringing
+                          ? [
+                              BoxShadow(
+                                color: Color(0xFFE8E7EA).withOpacity(0.3),
+                                blurRadius: 20,
+                                spreadRadius: 5,
+                              ),
+                            ]
+                          : [],
+                    ),
+                    child: ClipOval(
+                      child: 
+                      (_contactImage != null)
+                          ?
+                           Image.network(
+                                "${getEnv('API_BASE_URL')}$_contactImage",
+                              fit: BoxFit.cover,
+                              
+                            )
+                          : Image.asset(
+                              defaultImage,
+                              fit: BoxFit.cover,
+                            ).localAsset()
+                    ),
+                    ),
+                  // Microphone indicator badge (only show when connected)
+                  if (_callState == CallState.connected)
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _remoteParticipantMuted
+                            ? const Color(0xFFE74C3C) // Red for muted
+                            : const Color(0xFF2ECC71), // Green for unmuted
+                        border: Border.all(color: const Color(0xFF1C212C), width: 2),
+                      ),
+                      child: Icon(
+                        _remoteParticipantMuted ? Icons.mic_off : Icons.mic,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
+                ],
+              ),
             );
           },
         ),
@@ -1002,6 +1064,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
   }
 
   Widget _buildGroupCallContent() {
+    
     if (_callState == CallState.ringing) {
       // Show group name and image during ringing state
       return Column(
@@ -1051,7 +1114,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
                   ),
                   child: ClipOval(
                     child: Image.network(
-                      _groupImage,
+                      getUserAvatar(_chatId!.toString()),
                       fit: BoxFit.cover,
                     ),
                   ),
@@ -1172,10 +1235,10 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
                 : null,
           ),
           child: ClipOval(
-            child: Image.asset(
+            child: Image.network(
               image,
               fit: BoxFit.cover,
-            ).localAsset(),
+            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -1204,18 +1267,41 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            width: 60,
-            height: 60,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-            ),
-            child: ClipOval(
-              child: Image.asset(
-                participant.image,
-                fit: BoxFit.cover,
-              ).localAsset(),
-            ),
+          // Avatar with microphone indicator
+          Stack(
+            alignment: Alignment.bottomRight,
+            children: [
+              Container(
+                width: 60,
+                height: 60,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                ),
+                child: ClipOval(
+                  child: Image.network(
+                    participant.image,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+              // Microphone indicator badge
+              Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: participant.isMuted
+                      ? const Color(0xFFE74C3C) // Red for muted
+                      : const Color(0xFF2ECC71), // Green for unmuted
+                  border: Border.all(color: const Color(0xFF1C212C), width: 2),
+                ),
+                child: Icon(
+                  participant.isMuted ? Icons.mic_off : Icons.mic,
+                  color: Colors.white,
+                  size: 12,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           Text(
