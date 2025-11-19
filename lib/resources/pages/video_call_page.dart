@@ -180,17 +180,15 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
       }
     });
 
-    // Update call duration and video state periodically
-    // _durationUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-    //   if (mounted && _liveKitService.isConnected) {
-    //     // Only update duration in state
-    //     // Don't sync mute/video state here as it causes excessive rebuilds
-    //     print("Updating call duration: ${_liveKitService.callDuration}s");
-    //     setState(() {
-    //       _callDuration = _liveKitService.callDuration;
-    //     });
-    //   }
-    // });
+    // Update call duration periodically
+    _durationUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && _liveKitService.isConnected) {
+        print("📞 Updating call duration: ${_liveKitService.callDuration}s");
+        setState(() {
+          _callDuration = _liveKitService.callDuration;
+        });
+      }
+    });
   
   }
 
