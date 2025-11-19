@@ -197,9 +197,9 @@ class CallHandlingService {
         };
       
       if (callType == 'video') {
-        await routeTo(VideoCallPage.path, data: callData);
+        await routeTo(VideoCallPage.path, data: callData, navigationType: NavigationType.pushReplace);
       } else {
-        await routeTo(VoiceCallPage.path, data: callData);
+        await routeTo(VoiceCallPage.path, data: callData, navigationType: NavigationType.pushReplace);
       }
 
       print('🟢 ✅ Navigated to call screen');

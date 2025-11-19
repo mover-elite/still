@@ -92,7 +92,7 @@ class LiveKitService {
 
 
   StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
-
+  CameraPosition _currentCameraPosition = CameraPosition.front;
   /// Play ringtone
   Future<void> _playRingtone() async {
     try {
@@ -349,6 +349,7 @@ class LiveKitService {
         _participantHistory.clear();
         _enableAudio = true;
         _enableVideo = true;
+        _currentCameraPosition = CameraPosition.front;
         // Reset call status
         print('📞 [STATUS CHANGE] Setting status to IDLE (cleanup)');
         _updateCallStatus(CallStatus.ended);
@@ -535,7 +536,14 @@ class LiveKitService {
       final videoTrack = _room!.localParticipant!.videoTrackPublications.firstOrNull?.track;
       if (videoTrack is LocalVideoTrack) {
         // Toggle between front and back camera
-        await videoTrack.setCameraPosition(CameraPosition.back);
+        // final currentPosition = await videoTrack.source;
+        if(_currentCameraPosition == CameraPosition.front){
+          await videoTrack.setCameraPosition(CameraPosition.back);
+          _currentCameraPosition = CameraPosition.back;
+        }else{
+        await videoTrack.setCameraPosition(CameraPosition.front);
+        _currentCameraPosition = CameraPosition.front;
+        }
         print('📹 Camera switched');
       } else {
         print('⚠️ No video track to switch camera');

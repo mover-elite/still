@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import '/app/models/chat.dart';
@@ -573,6 +574,7 @@ class ChatService {
         // Check if app is in foreground
         if (NotificationService.instance.isAppInForeground) {
           // App is in foreground, show the full-screen call UI
+          
           if (type == "audio") {
             await NotificationService.instance.showIncomingCallNotification(chatId: chatId, callerId: callerId, callerName: chat.name, callType: "audio", callId: callId);
             await routeTo("/receive-call-screen", data: callData);
@@ -582,6 +584,7 @@ class ChatService {
           }
           print('📞 Call screen opened for: $callKey (tracking will be cleared on call end)');
         } else {
+          await NotificationService.instance.showIncomingCallNotification(chatId: chatId, callerId: callerId, callerName: chat.name, callType: type, callId: callId);
           // App is in background, show notification with actions
           // await NotificationService.instance.showIncomingCallNotification(
           //   chatId: chatId,
@@ -677,12 +680,13 @@ class ChatService {
             'isJoining': true,
             'callId': callId,
           };
+          // Navigator.pop();
           
           // Navigate to the appropriate call screen
           if (callType == 'audio') {
-            await routeTo("/receive-call-screen", data: callData);
+            await routeTo("/receive-call-screen", data: callData, navigationType: NavigationType.pushReplace);
           } else {
-            await routeTo("/receive-video-call-screen", data: callData);
+            await routeTo("/receive-video-call-screen", data: callData, navigationType: NavigationType.pushReplace);
           }
         }
       }

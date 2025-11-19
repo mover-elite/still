@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/app/networking/websocket_service.dart';
 import 'package:flutter_app/app/services/callkit_service.dart';
 import 'package:flutter_app/app/services/chat_service.dart';
+import 'package:flutter_app/app/services/livekit_service.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 
@@ -34,6 +35,7 @@ class _ReceiveVideoCallScreenPageState
   late Animation<double> _scaleAnimation;
   bool _isRingtonePlaying = false;
   StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
+  StreamSubscription<CallStatus>? _callStatusSubscription;
   String _callerName = 'Unknown'; // Store caller name
 
   @override
@@ -168,6 +170,40 @@ class _ReceiveVideoCallScreenPageState
             _handleCallEndedNotification(notification);
           }
         });
+        
+        // ✅ Subscribe to call status changes
+        // final liveKitService = LiveKitService();
+        // _callStatusSubscription = liveKitService.callStatusStream.listen((status) {
+        //   if (!mounted) return;
+          
+        //   // Close the screen if call status changes while page is mounted
+        //   if (status == CallStatus.ended) {
+        //     print('📞 Call status changed to $status - closing receive video call screen');
+            
+        //     // Stop ringtone
+        //     if (_isRingtonePlaying) {
+        //       FlutterRingtonePlayer().stop();
+        //       _isRingtonePlaying = false;
+        //     }
+            
+        //     // Clear call tracking
+        //     try {
+        //       final navigationData = data();
+        //       if (navigationData != null) {
+        //         final chatId = navigationData['chatId'];
+        //         final callId = navigationData['callId'];
+        //         ChatService().clearIncomingCall(chatId, callId);
+        //       }
+        //     } catch (e) {
+        //       print('Could not clear call tracking: $e');
+        //     }
+            
+        //     // Close the screen
+        //     if (mounted && Navigator.canPop(context)) {
+        //       Navigator.pop(context);
+        //     }
+        //   }
+        // });
       };
 
   @override
@@ -181,8 +217,9 @@ class _ReceiveVideoCallScreenPageState
     _glowController.dispose();
     _scaleController.dispose();
     
-    // Cancel notification subscription
+    // Cancel subscriptions
     _notificationSubscription?.cancel();
+    _callStatusSubscription?.cancel();
     
     // Stop ringtone if playing
     if (_isRingtonePlaying) {
@@ -195,7 +232,6 @@ class _ReceiveVideoCallScreenPageState
       final navigationData = data();
       if (navigationData != null) {
         final chatId = navigationData['chatId'];
-        final callerId = navigationData['callerId'];
         final callId = navigationData['callId'];
         ChatService().clearIncomingCall(chatId, callId);
       }

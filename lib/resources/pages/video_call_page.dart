@@ -396,6 +396,10 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
     return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
   }
 
+  Future<void> _toggleCamera() async {
+    await _liveKitService.switchCamera();
+  }
+
   /// ✅ Toggle video on/off
   Future<void> _toggleVideo() async {
     try {
@@ -994,7 +998,8 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
               icon: Icons.flip_camera_ios,
               label: "Camera",
               isActive: false,
-              onTap: () {
+              onTap: () async {
+                await _toggleCamera();
                 HapticFeedback.lightImpact();
               },
             ),

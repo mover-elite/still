@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/app/networking/websocket_service.dart';
 import 'package:flutter_app/app/services/callkit_service.dart';
 import 'package:flutter_app/app/services/chat_service.dart';
+import 'package:flutter_app/app/services/livekit_service.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 
@@ -34,10 +35,13 @@ class _ReceiveCallScreenPageState extends NyPage<ReceiveCallScreenPage>
   late Animation<double> _scaleAnimation;
   bool _isRingtonePlaying = false;
   StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
+  StreamSubscription<CallStatus>? _callStatusSubscription;
   String _callerName = 'Unknown'; // Store caller name
 
   @override
   get init => () {
+
+      
         // Extract caller name from navigation data
         final navigationData = data();
         
@@ -173,6 +177,34 @@ class _ReceiveCallScreenPageState extends NyPage<ReceiveCallScreenPage>
             _handleCallEndedNotification(notification);
           }
         });
+        
+        // ✅ Subscribe to call status changes
+        final liveKitService = LiveKitService();
+        
+        // _callStatusSubscription = liveKitService.callStatusStream.listen((status) {
+        //   if (!mounted) return;
+          
+        //   // Close the screen if call status changes while page is mounted
+        //   if (status == CallStatus.requesting || 
+        //       status == CallStatus.connecting || 
+        //       status == CallStatus.ringing || 
+        //       status == CallStatus.connected || 
+        //       status == CallStatus.ended) {
+        //     print('📞 Call status changed to $status - closing receive call screen');
+            
+        //     // Stop ringtone
+        //     if (_isRingtonePlaying) {
+        //       FlutterRingtonePlayer().stop();
+        //       _isRingtonePlaying = false;
+        //     }
+        //     dispose();
+            
+        
+        //     // if (mounted && Navigator.canPop(context)) {
+        //     //   Navigator.pop(context);
+        //     // }
+        //   }
+        // });
       };
 
   @override
@@ -186,8 +218,9 @@ class _ReceiveCallScreenPageState extends NyPage<ReceiveCallScreenPage>
     _glowController.dispose();
     _scaleController.dispose();
     
-    // Cancel notification subscription
+    // Cancel subscriptions
     _notificationSubscription?.cancel();
+    _callStatusSubscription?.cancel();
     
     // Stop ringtone
     if (_isRingtonePlaying) {
@@ -200,7 +233,6 @@ class _ReceiveCallScreenPageState extends NyPage<ReceiveCallScreenPage>
       final navigationData = data();
       if (navigationData != null) {
         final chatId = navigationData['chatId'];
-        final callerId = navigationData['callerId'];
         final callId = navigationData['callId'];
         ChatService().clearIncomingCall(chatId, callId);
       }
