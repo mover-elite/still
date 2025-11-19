@@ -348,7 +348,7 @@ class LiveKitService {
         _startTime = null;
         _participantHistory.clear();
         _enableAudio = true;
-        _enableVideo = false;
+        _enableVideo = true;
         // Reset call status
         print('📞 [STATUS CHANGE] Setting status to IDLE (cleanup)');
         _updateCallStatus(CallStatus.ended);
@@ -368,7 +368,7 @@ class LiveKitService {
         _currentCallData = null;
         _isJoining = false;
         _enableAudio = true;
-        _enableVideo = false;
+        _enableVideo = true;
         
         _startTime = null;
         
