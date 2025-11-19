@@ -33,7 +33,7 @@ class LiveKitService {
   
   // Track enable preferences (set before connecting, used after RoomConnectedEvent)
   bool _enableAudio = true;
-  bool _enableVideo = false;
+  bool _enableVideo = true;
   
   // Current call metadata (persists beyond UI lifecycle)
   
@@ -166,7 +166,7 @@ class LiveKitService {
     required String callId,
     bool autoSubscribe = true,
     bool enableAudio = true,
-    bool enableVideo = false,
+    bool enableVideo = true,
     
     int? chatId,
     
@@ -195,11 +195,11 @@ class LiveKitService {
       ));
 
 
-      if (_enableAudio) {
+      if (enableAudio) {
         await _room!.localParticipant?.setMicrophoneEnabled(true);
         print('🎤 Microphone enabled before connection');
       }
-      if (_enableVideo) {
+      if (enableVideo) {
         await _room!.localParticipant?.setCameraEnabled(true);
         print('📹 Camera enabled before connection');
       }
