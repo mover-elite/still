@@ -25,12 +25,35 @@ class _CallsTabState extends NyState<CallsTab> {
   List<UserCallsModel> _callHistory = [];
   List<Chat> _chats = [];
   bool _isLoadingCalls = true;
+  
+  // Track if we should refresh on next build
+  bool _shouldRefresh = true;
 
   @override
   get init => () {
+    print("Here");
     _loadCallHistory();
     _loadChats();
   };
+
+  @override
+  void deactivate() {
+    // Mark that we should refresh when this tab comes back into view
+    _shouldRefresh = true;
+    super.deactivate();
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    // Refresh when the widget is reactivated (tab comes back into focus)
+    if (_shouldRefresh) {
+      _shouldRefresh = false;
+      print('📞 Calls tab reactivated, refetching calls...');
+      _loadCallHistory();
+      _loadChats();
+    }
+  }
 
   /// Load call history from API
   Future<void> _loadCallHistory() async {
@@ -134,8 +157,22 @@ class _CallsTabState extends NyState<CallsTab> {
           ),
         ),
       ),
-      body: _showHistory ? _buildCallHistory() : _buildMainCallsView(),
+      body: RefreshIndicator(
+        onRefresh: _handleRefresh,
+        backgroundColor: Color(0xFF1C212C),
+        color: Color(0xFF3498DB),
+        child: _showHistory ? _buildCallHistory() : _buildMainCallsView(),
+      ),
     );
+  }
+
+  /// Handle pull-to-refresh
+  Future<void> _handleRefresh() async {
+    print('🔄 Pull-to-refresh triggered');
+    await Future.wait([
+      _loadCallHistory(),
+      _loadChats(),
+    ]);
   }
 
   Widget _buildMainCallsView() {
@@ -145,72 +182,80 @@ class _CallsTabState extends NyState<CallsTab> {
       );
     }
 
-    return Column(
-      children: [
-        // Make private calls section
-        Container(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            children: [
-              SizedBox(
-                height: 40,
-              ),
-              Image.asset(
-                'make_call.png', // Your phone image asset
-                width: 80,
-                height: 64,
-                color: Color(0xFF6C7B7F),
-              ).localAsset(),
-              const SizedBox(height: 60),
-              const Text(
-                'Make private calls',
-                style: TextStyle(
-                    color: Color(0xFFE8E7EA),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Your recent voice and video calls will\nappear here',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    color: Color(0xFF8E9297),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w400),
-              ),
-              const SizedBox(height: 32),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _showNewCallBottomSheet,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E333E),
-                    foregroundColor: Color(0xFF2E333E),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(1),
+    // Show empty state with start call button only if no call history
+    if (_callHistory.isEmpty) {
+      return Column(
+        children: [
+          // Make private calls section
+          Container(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              children: [
+                SizedBox(
+                  height: 40,
+                ),
+                Image.asset(
+                  'make_call.png', // Your phone image asset
+                  width: 80,
+                  height: 64,
+                  color: Color(0xFF6C7B7F),
+                ).localAsset(),
+                const SizedBox(height: 60),
+                const Text(
+                  'Make private calls',
+                  style: TextStyle(
+                      color: Color(0xFFE8E7EA),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Your recent voice and video calls will\nappear here',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: Color(0xFF8E9297),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400),
+                ),
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _showNewCallBottomSheet,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2E333E),
+                      foregroundColor: Color(0xFF2E333E),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(1),
+                      ),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.add,
+                          size: 14,
+                          color: Color(0xFFAACFFF),
+                        ),
+                        SizedBox(width: 8),
+                        Text('Start Call',
+                            style: TextStyle(
+                                fontSize: 14, color: Color(0xFFAACFFF))),
+                      ],
                     ),
                   ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.add,
-                        size: 14,
-                        color: Color(0xFFAACFFF),
-                      ),
-                      SizedBox(width: 8),
-                      Text('Start Call',
-                          style: TextStyle(
-                              fontSize: 14, color: Color(0xFFAACFFF))),
-                    ],
-                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+        ],
+      );
+    }
 
+    // Show call history if available
+    return Column(
+      children: [
         // Recent calls section
         Expanded(
           child: Column(
@@ -233,21 +278,14 @@ class _CallsTabState extends NyState<CallsTab> {
                 ),
               ),
               Expanded(
-                child: _callHistory.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No call history',
-                          style: TextStyle(color: Color(0xFF8E9297)),
-                        ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        itemCount: _callHistory.length,
-                        itemBuilder: (context, index) {
-                          final call = _callHistory[index];
-                          return _buildCallHistoryItemAsContact(call);
-                        },
-                      ),
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  itemCount: _callHistory.length,
+                  itemBuilder: (context, index) {
+                    final call = _callHistory[index];
+                    return _buildCallHistoryItemAsContact(call);
+                  },
+                ),
               ),
             ],
           ),
