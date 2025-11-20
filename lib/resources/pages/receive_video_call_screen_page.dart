@@ -172,6 +172,7 @@ class _ReceiveVideoCallScreenPageState
         // Listen for call ended/declined notifications
         _notificationSubscription = WebSocketService().notificationStream.listen((notification) {
           final action = notification['action'];
+          print("Received notification in receive call screen: $notification");
           if (action == 'call:declined' || action == 'call:ended') {
             _handleCallEndedNotification(notification);
           }
@@ -280,8 +281,8 @@ class _ReceiveVideoCallScreenPageState
       final isGroup = navigationData['isGroup'] ?? false;
       
       // Only handle if it's for this call and it's a single (non-group) call
+      print("notification type for call video ended handling: $notificationType");
       if (notificationChatId == currentChatId && 
-          notificationType == 'video' && 
           !isGroup) {
         print('📞 Call ended/declined notification received for single video call - closing screen');
         

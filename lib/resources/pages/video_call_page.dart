@@ -508,10 +508,10 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
 
   /// ✅ End the call and navigate back
   Future<void> _endCall() async {
-    if (_isEndingCall) {
-      print("⚠️ _endCall already in progress, skipping duplicate call");
-      return;
-    }
+    // if (_isEndingCall) {
+    //   print("⚠️ _endCall already in progress, skipping duplicate call");
+    //   return;
+    // }
     
     _isEndingCall = true;
     print("📞 Starting call end process...");
@@ -520,7 +520,14 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
       _stopAllAnimations();
 
       // Disconnect via LiveKitService
-      await _liveKitService.disconnect(reason: 'User ended call', sendDeclineNotification: true);
+      print("Disconnecting from LiveKit...");
+      try{
+        await _liveKitService.disconnect(reason: 'User ended call', sendDeclineNotification: true, callId: _callId);  
+      }catch(e){
+        print("Error disconnecting LiveKit: $e");
+      }
+      
+      print("Livekit disconnected");
       // CallHandlingService().endCall();
       // Safely pop the navigator
       print("Can pop navigator: ${Navigator.canPop(context)}");

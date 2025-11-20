@@ -172,7 +172,9 @@ class _ReceiveCallScreenPageState extends NyPage<ReceiveCallScreenPage>
         
         // Listen for call ended/declined notifications
         _notificationSubscription = WebSocketService().notificationStream.listen((notification) {
+          
           final action = notification['action'];
+          
           if (action == 'call:declined' || action == 'call:ended') {
             _handleCallEndedNotification(notification);
           }
