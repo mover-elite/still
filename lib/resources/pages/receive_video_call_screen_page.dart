@@ -42,8 +42,14 @@ class _ReceiveVideoCallScreenPageState
   get init => () {
         // Extract caller name from navigation data
         final navigationData = data();
-        if (navigationData != null && navigationData['partner'] != null) {
-          _callerName = navigationData['partner']['username'] ?? 'Unknown';
+        if (navigationData != null) {
+          if(navigationData['isGroup'] == true){
+            _callerName = navigationData['name'] ?? "Unknown";
+          } else{
+            _callerName = navigationData['partner']['username'] ?? 'Unknown';
+          }
+
+          
         }
         
         // Initialize animation controllers

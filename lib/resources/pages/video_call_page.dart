@@ -17,11 +17,13 @@ class CallParticipant {
   final String name;
   final String image;
   final bool isSelf;
+  final bool isMuted;
 
   CallParticipant({
     required this.name,
     required this.image,
     this.isSelf = false,
+    this.isMuted = false,
   });
 }
 
@@ -39,12 +41,14 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
   // UI state - synced with LiveKitService
   CallState _callState = CallState.requesting;
   int _callDuration = 0;
+  bool _isMuted = false;
+  bool _remoteParticipantMuted = false; // Track remote participant mute status for single calls
   
   CallType _callType = CallType.single;
   bool _isEndingCall = false;
   
   // Call data
-  String _contactName = "Layla B";
+  String _contactName = "Allen Walker";
   String? _contactImage;
   String defaultImage = "image2.png";
   int? _chatId;
@@ -53,6 +57,8 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
   bool _isJoining = false;
   String _groupName = "";
   String _groupImage = "image9.png";
+
+  List<CallParticipant> _participants = [];
 
   // Event subscriptions from LiveKitService
   StreamSubscription<ConnectionStateEvent>? _connectionSubscription;
@@ -172,10 +178,15 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
       switch (event.type) {
         case ParticipantChangeType.connected:
           print('👤 Participant connected: ${event.participant.name}');
+          // ✅ Sync participants when remote participant connects
+          if (_callType == CallType.group) {
+            _syncParticipants();
+          }
           break;
 
         case ParticipantChangeType.disconnected:
           print('👤 Participant disconnected: ${event.participant.name}');
+          _syncParticipants();
           break;
       }
     });
@@ -186,14 +197,71 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
         print("📞 Updating call duration: ${_liveKitService.callDuration}s");
         setState(() {
           _callDuration = _liveKitService.callDuration;
+          // Sync mute state from LiveKitService
+          _isMuted = !_liveKitService.isMicrophoneEnabled;
+          
+          // For single calls, track remote participant mute status
+          if (_callType == CallType.single && _liveKitService.remoteParticipants.isNotEmpty) {
+            _remoteParticipantMuted = !_liveKitService.remoteParticipants.first.isMicrophoneEnabled();
+          }
         });
+        
+        // ✅ Sync participants to reflect mute status changes
+        if (_callType == CallType.group) {
+          _syncParticipants();
+        }
       }
     });
   
   }
 
+  /// ✅ Sync participants array with LiveKit remote participants
+  void _syncParticipants() {
+    if (_callType != CallType.group) {
+      return; // Only sync for group calls
+    }
+
+    List<CallParticipant> newParticipants = [];
+
+    // Add local participant (self)
+    final user = Auth.data();
+    
+    if (user != null) {
+      newParticipants.add(CallParticipant(
+        name: "You",
+        isSelf: true,
+        image: getUserAvatar(user['id']!.toString()).toString(),
+        isMuted: _isMuted, // Track self mute status
+      ));
+    }
+
+    // Add all remote participants from LiveKitService
+    for (var remoteParticipant in _liveKitService.remoteParticipants) {
+      newParticipants.add(CallParticipant(
+        name: remoteParticipant.name,
+        isSelf: false,
+        image: getUserAvatar(remoteParticipant.identity).toString(),
+        isMuted: !remoteParticipant.isMicrophoneEnabled(), // Track remote mute status
+      ));
+    }
+
+    if (mounted) {
+      setState(() {
+        _participants = newParticipants;
+      });
+    }
+
+    print("👥 Synced participants: ${_participants.length} total");
+  }
+
+  String getUserAvatar(String userId) {
+    final baseUrl = getEnv("API_BASE_URL");
+    return '$baseUrl/uploads/${userId}';
+  }
+
   void _extractCallData() async {
     final navigationData = data();
+    print("Navigational data for call:");
     print(navigationData);
 
     if (navigationData != null) {
@@ -206,10 +274,11 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
       // Normal flow for new calls
       if (navigationData['isGroup'] == true) {
         _callType = CallType.group;
-        _groupName = navigationData['groupName'] ?? _groupName;
-        _groupImage = navigationData['groupImage'] ?? _groupImage;
+        _groupName = navigationData['name'] ?? "Unknown";
+        _contactName = navigationData['name'] ?? "Unknown";
+        _groupImage = navigationData['avatar'] ?? _groupImage;
         _callerId = navigationData['callerId'];
-        
+        _contactImage = _groupImage;
         print("Group call: $_groupName");
         
         if (_isJoining) {
@@ -884,24 +953,49 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
               bottom: 8,
               left: 8,
               right: 8,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1C212C).withOpacity(0.8),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  isLocal
-                      ? 'You'
-                      : (participant.name.isEmpty
-                          ? 'Remote User'
-                          : participant.name),
-                  style: const TextStyle(
-                    color: Color(0xFFE8E7EA),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Name
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1C212C).withOpacity(0.8),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      isLocal
+                          ? 'You'
+                          : (participant.name.isEmpty
+                              ? 'Remote User'
+                              : participant.name),
+                      style: const TextStyle(
+                        color: Color(0xFFE8E7EA),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                   ),
-                ),
+                  // Microphone indicator
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isLocal
+                          ? (_isMuted ? const Color(0xFFE74C3C) : const Color(0xFF2ECC71))
+                          : (!participant.isMicrophoneEnabled() ? const Color(0xFFE74C3C) : const Color(0xFF2ECC71)),
+                      border: Border.all(color: const Color(0xFF1C212C), width: 1),
+                    ),
+                    child: Icon(
+                      isLocal
+                          ? (_isMuted ? Icons.mic_off : Icons.mic)
+                          : (!participant.isMicrophoneEnabled() ? Icons.mic_off : Icons.mic),
+                      color: Colors.white,
+                      size: 12,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],

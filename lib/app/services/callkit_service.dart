@@ -374,7 +374,10 @@ class CallKitService {
   Future<void> endCall({required String callUUID}) async {
     try {
       print('🔵 📞 Ending call - UUID: $callUUID');
-      await FlutterCallkitIncoming.endCall(callUUID);
+      // print("Active calls before ending: ${await getActiveCalls()}");
+      // await FlutterCallkitIncoming.endCall(callUUID);
+      print("Ending call calls...");
+      await FlutterCallkitIncoming.endAllCalls();
       print('🟢 ✅ CallKit call ended successfully');
     } catch (e) {
       print('🔴 ❌ Error ending call: $e');

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/app/services/call_handling_service.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import '/app/models/chat.dart';
@@ -617,7 +618,7 @@ class ChatService {
     
     // Cancel any active call notification
     await NotificationService.instance.cancelCallNotification(chatId, callId);
-    
+    await CallHandlingService().endActiveCall(callUUID: callId);
     print('📞 Cleared incoming call tracking: $callKey');
   }
 
@@ -635,6 +636,7 @@ class ChatService {
       
       // Cancel any active call notification
       await NotificationService.instance.cancelCallNotification(chatId, callId);
+      await CallHandlingService().endActiveCall(callUUID: callId);
       print('📞 Call ended/declined for chat $chatId');
     } catch (e) {
       print('❌ Error handling call ended: $e');
