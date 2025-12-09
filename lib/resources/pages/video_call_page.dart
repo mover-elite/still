@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_app/app/networking/chat_api_service.dart';
 import 'package:flutter_app/app/services/call_handling_service.dart';
 import 'package:flutter_app/app/services/livekit_service.dart';
+import 'package:flutter_app/app/services/call_overlay_service.dart';
 import 'package:flutter_app/app/models/livekit_events.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:nylo_framework/nylo_framework.dart';
@@ -46,6 +47,7 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
   
   CallType _callType = CallType.single;
   bool _isEndingCall = false;
+  bool _isMinimized = false;
   
   // Call data
   String _contactName = "Allen Walker";
@@ -390,6 +392,7 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
         chatId: _chatId!,
         enableAudio: true,
         enableVideo: true,
+        callMediaType: 'video', // Explicitly set as video call
         callData: callData,
         callId: response.callId,
       );
@@ -437,6 +440,7 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
         chatId: _chatId!,
         enableAudio: true,
         enableVideo: true,
+        callMediaType: 'video', // Explicitly set as video call
         callData: callData,
         callId: response.callId,
       );
@@ -495,6 +499,43 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
       print("❌ Error toggling video: $e");
       _showErrorDialog("Failed to toggle camera: ${e.toString()}");
     }
+  }
+
+  /// 📱 Minimize the call and show banner at top
+  void _minimizeCall() {
+    print("📱 Minimizing call...");
+    print("   LiveKitService connected: ${_liveKitService.isConnected}");
+    print("   Chat ID: $_chatId");
+    print("   Contact Name: $_contactName");
+    print("   Group Name: $_groupName");
+    
+    if (_chatId == null) {
+      print("❌ Cannot minimize: chatId is null!");
+      return;
+    }
+    
+    _isMinimized = true;
+    
+    // Show the banner with current call info
+    final bannerName = _callType == CallType.single ? _contactName : _groupName;
+    final bannerImage = _callType == CallType.single ? _contactImage : _groupImage;
+    
+    print("   Showing banner for: $bannerName");
+    
+    CallOverlayService().showCallBanner(
+      name: bannerName,
+      image: bannerImage,
+      callType: _callType,
+      chatId: _chatId!,
+      duration: _formatDuration(_callDuration),
+      isMuted: _isMuted,
+      mediaType: 'video', // Explicitly set as video
+    );
+    
+    print("   Banner shown, navigating back...");
+    
+    // Navigate back - the LiveKitService will keep the call alive
+    Navigator.of(context).pop();
   }
 
   /// ✅ Mute/unmute microphone
@@ -572,8 +613,9 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
   }
 
   @override
+  @override
   void dispose() {
-    print("🧹 Disposing video call page...");
+    print("🧹 Disposing video call page... isMinimized: $_isMinimized");
     
     // Always cancel subscriptions to prevent memory leaks
     _connectionSubscription?.cancel();
@@ -581,9 +623,17 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
     _callStatusSubscription?.cancel();
     _durationUpdateTimer?.cancel();
     
-    // End the call
-    _isEndingCall = true;
-    _liveKitService.disconnect(reason: 'Page disposed - call ended');
+    // Only end the call if not minimized
+    if (!_isMinimized) {
+      print("📞 Call ended (not minimized)");
+      _isEndingCall = true;
+      _liveKitService.disconnect(reason: 'Page disposed - call ended');
+      
+      // Hide the call banner
+      CallOverlayService().hideCallBanner();
+    } else {
+      print("📱 Call minimized - keeping connection alive");
+    }
     
     // Cleanup animations
     _fadeController.dispose();
@@ -591,23 +641,32 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
   }
 
   @override
+  @override
   Widget view(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: FadeTransition(
-          opacity: _fadeAnimation,
-          child: Stack(
-            children: [
-              // Video content
-              _buildVideoContent(),
+    return WillPopScope(
+      onWillPop: () async {
+        // Don't allow back button to close the page
+        // Instead, minimize the call
+        _minimizeCall();
+        return false;
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: FadeTransition(
+            opacity: _fadeAnimation,
+            child: Stack(
+              children: [
+                // Video content
+                _buildVideoContent(),
 
-              // Top header
-              _buildTopHeader(),
+                // Top header with minimize button
+                _buildTopHeader(),
 
-              // Bottom controls
-              _buildBottomControls(),
-            ],
+                // Bottom controls
+                _buildBottomControls(),
+              ],
+            ),
           ),
         ),
       ),
@@ -639,7 +698,7 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
       left: 0,
       right: 0,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -652,18 +711,14 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
         ),
         child: Row(
           children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: Color(0xFF1C212C).withOpacity(0.8),
-                borderRadius: BorderRadius.circular(8),
+            // ✅ Minimize button
+            IconButton(
+              icon: const Icon(
+                Icons.arrow_back,
+                color: Colors.white,
+                size: 24,
               ),
-              child: const Icon(
-                Icons.remove,
-                color: Color(0xFFE8E7EA),
-                size: 20,
-              ),
+              onPressed: _minimizeCall,
             ),
 
             Expanded(
@@ -691,7 +746,7 @@ class _VideoCallPageState extends NyPage<VideoCallPage>
               ),
             ),
 
-            const SizedBox(width: 32),
+            const SizedBox(width: 40),
           ],
         ),
       ),

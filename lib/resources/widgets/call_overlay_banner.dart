@@ -3,6 +3,7 @@ import 'package:flutter_app/app/services/call_overlay_service.dart';
 import 'package:flutter_app/app/services/livekit_service.dart';
 import 'package:flutter_app/app/models/livekit_events.dart';
 import 'package:flutter_app/resources/pages/voice_call_page.dart';
+import 'package:flutter_app/resources/pages/video_call_page.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 
 /// Widget that shows a minimized call banner at the top of the app
@@ -12,19 +13,20 @@ class CallOverlayBanner extends StatelessWidget {
   const CallOverlayBanner({Key? key, required this.callState}) : super(key: key);
 
   String _getStatusText(CallStatus status) {
+    final callTypeText = callState.mediaType == 'video' ? 'Video call' : 'Voice call';
     switch (status) {
       case CallStatus.idle:
-        return 'Voice call';
+        return callTypeText;
       case CallStatus.requesting:
-        return 'Voice call · Requesting...';
+        return '$callTypeText · Requesting...';
       case CallStatus.connecting:
-        return 'Voice call · Connecting...';
+        return '$callTypeText · Connecting...';
       case CallStatus.ringing:
-        return 'Voice call · Ringing...';
+        return '$callTypeText · Ringing...';
       case CallStatus.connected:
-        return 'Voice call · In call';
+        return '$callTypeText · In call';
       case CallStatus.ended:
-        return 'Voice call · Ended';
+        return '$callTypeText · Ended';
     }
   }
 
@@ -59,7 +61,11 @@ class CallOverlayBanner extends StatelessWidget {
             navigationData.addAll(callData['callData'] as Map<String, dynamic>);
           }
           
-          routeTo(VoiceCallPage.path, 
+          // Navigate to the correct page based on media type
+          final isVideoCall = callData['mediaType'] == 'video';
+          final routePath = isVideoCall ? VideoCallPage.path : VoiceCallPage.path;
+          
+          routeTo(routePath, 
             navigationType: NavigationType.push,
             data: navigationData,
           );
@@ -166,6 +172,8 @@ class CallOverlayBanner extends StatelessWidget {
                           onPressed: () {
                             Navigator.pop(dialogContext);
                             CallOverlayService().hideCallBanner();
+                            LiveKitService().disconnect(sendDeclineNotification: true);
+                            
                             // The call page will handle actual disconnection
                           },
                           child: const Text(

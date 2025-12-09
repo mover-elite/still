@@ -505,6 +505,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         callType: _callType,
         chatId: _chatId!,
         enableAudio: true,
+        callMediaType: 'audio', // Explicitly set as audio call
         callData: callData,
         callId: response.callId,
       );
@@ -551,6 +552,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
         callType: _callType,
         chatId: _chatId!,
         enableAudio: true,
+        callMediaType: 'audio', // Explicitly set as audio call
         callData: callData,
         callId: response.callId,
       );
@@ -818,6 +820,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
       chatId: _chatId!,
       duration: _formatDuration(_callDuration),
       isMuted: _isMuted,
+      mediaType: 'audio', // Explicitly set as audio
     );
     
     print("   Banner shown, navigating back...");

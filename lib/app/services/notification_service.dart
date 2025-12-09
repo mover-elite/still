@@ -1,17 +1,12 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/app/networking/chat_api_service.dart';
 import 'package:flutter_app/app/services/callkit_service.dart';
-import 'package:flutter_app/firebase_options.dart';
-import 'package:flutter_callkit_incoming/entities/android_params.dart';
-import 'package:flutter_callkit_incoming/entities/call_kit_params.dart';
-import 'package:flutter_callkit_incoming/entities/ios_params.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import "package:flutter_callkit_incoming/flutter_callkit_incoming.dart";
+
 
 class NotificationService with WidgetsBindingObserver {
   NotificationService._();
@@ -39,9 +34,9 @@ class NotificationService with WidgetsBindingObserver {
       sound: true,
       announcement: true,
     );
-
-    // final apnsToken = await FirebaseMessaging.instance.getAPNSToken();
-    // print('APNs Token: $apnsToken');
+ 
+    final apnsToken = await FirebaseMessaging.instance.getAPNSToken();
+    print('APNs Token: $apnsToken');
     final fcmToken = await _firebaseMessaging.getToken();
     print('FCM Token $fcmToken',);
     
@@ -51,6 +46,9 @@ class NotificationService with WidgetsBindingObserver {
       }).catchError((error) {
         print('Error sending FCM Token to server: $error');
       });
+    }else{
+      // Alert the user that FCM token retrieval failed
+      
     }
       
       
@@ -105,7 +103,7 @@ class NotificationService with WidgetsBindingObserver {
 
 
     // Handle background messages, when the app is terminated 
-    // FirebaseMessaging.onBackgroundMessage(_backgroundMessageHandler);
+    FirebaseMessaging.onBackgroundMessage(_backgroundMessageHandler);
 
 
   }
@@ -293,6 +291,37 @@ class NotificationService with WidgetsBindingObserver {
     await _fln.cancel(chatId, tag: callId);
   }
 
+  Future<void> handleBackgroundNotification(RemoteMessage message) async {
+    print('🔄 Background message received: in notification_service.dart ${message.messageId}');
+    print('   Title: ${message.notification?.title}');
+    print('   Body: ${message.notification?.body}');
+    print('   Data: ${message.data}');
+    
+    try{
+      await Firebase.initializeApp();
+      final data = message.data;
+
+     if(data['type'] == 'voice-call' || data['type'] == 'video-call') {
+      
+        print('Handling background call notification');
+        print("Call type: ${data['type']}");
+        await NotificationService.instance.showIncomingCallNotification(
+          chatId: int.parse(data['chatId']),
+          callerName: data['callerName'],
+          callerId: int.parse(data['callerId']),
+          callType: data['type'] == "voice-call" ? "audio" : "video",
+          callId: data['callId'],
+        );
+    }
+      print('✅ Background message processing complete');
+    }catch(e){
+      print('Firebase already initialized: $e');  
+    }
+
+  }
+
+
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _isForeground = state == AppLifecycleState.resumed;
@@ -316,7 +345,7 @@ Future<void> _backgroundMessageHandler(RemoteMessage message) async {
   // await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   // await NotificationService.instance.init();
    await Firebase.initializeApp();
-  
+  await NotificationService.instance.handleBackgroundNotification(message);
   print('🔄 Background message received: in notification_service.dart ${message.messageId}');
   print('   Title: ${message.notification?.title}');
   print('   Body: ${message.notification?.body}');

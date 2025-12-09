@@ -26,6 +26,7 @@ class CallOverlayService {
     print('   Is connected: ${_liveKitService.isConnected}');
     print('   Chat ID: ${_liveKitService.currentChatId}');
     print('   Call Type: ${_liveKitService.currentCallType}');
+    print('   Media Type: ${_liveKitService.callMediaType}');
     print('   Call Data: ${_liveKitService.currentCallData}');
     
     if (!_liveKitService.hasActiveCall) {
@@ -36,6 +37,7 @@ class CallOverlayService {
     final data = {
       'chatId': _liveKitService.currentChatId,
       'callType': _liveKitService.currentCallType,
+      'mediaType': _liveKitService.callMediaType, // Include media type
       'callData': _liveKitService.currentCallData,
     };
     
@@ -51,17 +53,20 @@ class CallOverlayService {
     required int chatId,
     required String duration,
     required bool isMuted,
+    String mediaType = 'audio', // 'audio' or 'video'
   }) {
     print("🎯 CallOverlayService.showCallBanner called");
     print("   Name: $name");
     print("   ChatId: $chatId");
     print("   Duration: $duration");
     print("   Call Type: $callType");
+    print("   Media Type: $mediaType");
     
     _currentState = CallOverlayState(
       name: name,
       image: image,
       callType: callType,
+      mediaType: mediaType,
       chatId: chatId,
       duration: duration,
       isMuted: isMuted,
@@ -88,6 +93,7 @@ class CallOverlayService {
           name: _currentState!.name,
           image: _currentState!.image,
           callType: _currentState!.callType,
+          mediaType: _currentState!.mediaType,
           chatId: _currentState!.chatId,
           duration: _currentState!.duration,
           isMuted: _currentState!.isMuted,
@@ -111,6 +117,7 @@ class CallOverlayService {
           name: _currentState!.name,
           image: _currentState!.image,
           callType: _currentState!.callType,
+          mediaType: _currentState!.mediaType,
           chatId: _currentState!.chatId,
           duration: formattedDuration,
           isMuted: !_liveKitService.isMicrophoneEnabled,
@@ -130,6 +137,7 @@ class CallOverlayService {
         name: _currentState!.name,
         image: _currentState!.image,
         callType: _currentState!.callType,
+        mediaType: _currentState!.mediaType,
         chatId: _currentState!.chatId,
         duration: duration,
         isMuted: _currentState!.isMuted,
@@ -146,6 +154,7 @@ class CallOverlayService {
         name: _currentState!.name,
         image: _currentState!.image,
         callType: _currentState!.callType,
+        mediaType: _currentState!.mediaType,
         chatId: _currentState!.chatId,
         duration: _currentState!.duration,
         isMuted: isMuted,
@@ -178,6 +187,7 @@ class CallOverlayState {
   final String name;
   final String? image;
   final CallType callType;
+  final String mediaType; // 'audio' or 'video'
   final int chatId;
   final String duration;
   final bool isMuted;
@@ -187,6 +197,7 @@ class CallOverlayState {
     required this.name,
     required this.image,
     required this.callType,
+    required this.mediaType,
     required this.chatId,
     required this.duration,
     required this.isMuted,

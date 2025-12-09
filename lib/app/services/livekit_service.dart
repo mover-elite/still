@@ -40,13 +40,14 @@ class LiveKitService {
   String? _currentCallId;
   int? _currentChatId;
   CallType? _currentCallType;
+  String _callMediaType = 'audio'; // 'audio' or 'video'
   Map<String, dynamic>? _currentCallData;
   CallStatus _callStatus = CallStatus.idle;
   bool _isJoining = false; // Track if joining incoming call
   
   // Ringtone management
   AudioPlayer? _audioPlayer;
-
+ 
   // Participants tracking
   final List<RemoteParticipant> _remoteParticipants = [];
   final List<Map<String, dynamic>> _participantHistory = [];
@@ -86,6 +87,7 @@ class LiveKitService {
   String? get currentCallUUID => _currentCallId;
   int? get currentChatId => _chatId;
   CallType? get currentCallType => _currentCallType;
+  String get callMediaType => _callMediaType; // 'audio' or 'video'
   Map<String, dynamic>? get currentCallData => _currentCallData != null ? Map.from(_currentCallData!) : null;
   bool get hasActiveCall => _chatId != null && isConnected;
   int? _chatId;
@@ -169,7 +171,7 @@ class LiveKitService {
     bool enableVideo = true,
     
     int? chatId,
-    
+    String callMediaType = 'audio', // 'audio' or 'video'
     Map<String, dynamic>? callData,
   }) async {
     if (_isConnecting) {
@@ -225,12 +227,12 @@ class LiveKitService {
       );
 
       print('✅ Connected to LiveKit room');
-
       // Store call metadata
       
       _currentChatId = chatId;
       _chatId = chatId;
       _currentCallType = callType;
+      _callMediaType = callMediaType; // Store media type ('audio' or 'video')
       _currentCallData = callData;
       _currentCallId = callId;
       
@@ -342,6 +344,7 @@ class LiveKitService {
         _currentChatId = null;
         _chatId = null;
         _currentCallType = null;
+        _callMediaType = 'audio'; // Reset to default
         _currentCallData = null;
         _isJoining = false;
         _callDuration = 0;
@@ -366,6 +369,7 @@ class LiveKitService {
         _currentChatId = null;
         _chatId = null;
         _currentCallType = null;
+        _callMediaType = 'audio'; // Reset to default
         _currentCallData = null;
         _isJoining = false;
         _enableAudio = true;

@@ -600,14 +600,14 @@ class ChatService {
         // It will be removed when the call is answered, declined, or times out
       } else {
         // If chat is null, remove from tracking since navigation didn't happen
-        _activeIncomingCalls.remove(callKey);
+        _activeIncomingCalls.remove(data['callId']);
         print('📞 Chat not found, cleared tracking: $callKey');
       }
     } catch (e) {
       print('❌ Error handling join call: $e');
       // Remove from tracking on error since navigation failed
-      final callKey = '${data['chatId']}-${data['callerId']}-${data['type']}';
-      _activeIncomingCalls.remove(callKey);
+      
+      _activeIncomingCalls.remove(data['callId']);
     }
   }
 

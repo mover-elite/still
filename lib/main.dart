@@ -18,24 +18,26 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   print('   Title: ${message.notification?.title}');
   print('   Body: ${message.notification?.body}');
   print('   Data: ${message.data}');
-  final data = message.data;
+  // final data = message.data;
   // Initialize Firebase if needed
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    if(data['type'] == 'voice-call' || data['type'] == 'video-call') {
+    await NotificationService.instance.handleBackgroundNotification(message);
+    // await Firebase.initializeApp(
+    //   options: DefaultFirebaseOptions.currentPlatform,
+    // );
+    
+    // if(data['type'] == 'voice-call' || data['type'] == 'video-call') {
       
-      print('Handling background call notification');
-      print("Call type: ${data['type']}");
-      await NotificationService.instance.showIncomingCallNotification(
-        chatId: int.parse(data['chatId']),
-        callerName: data['callerName'],
-        callerId: int.parse(data['callerId']),
-        callType: data['type'] == "voice-call" ? "audio" : "video",
-        callId: data['callId'],
-      );
-    }
+    //   print('Handling background call notification');
+    //   print("Call type: ${data['type']}");
+    //   await NotificationService.instance.showIncomingCallNotification(
+    //     chatId: int.parse(data['chatId']),
+    //     callerName: data['callerName'],
+    //     callerId: int.parse(data['callerId']),
+    //     callType: data['type'] == "voice-call" ? "audio" : "video",
+    //     callId: data['callId'],
+    //   );
+    // }
     
 
   } catch (e) {
