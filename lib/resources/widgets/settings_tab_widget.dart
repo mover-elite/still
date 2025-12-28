@@ -11,24 +11,23 @@ class SettingsTab extends StatefulWidget {
   @override
   createState() => _SettingsTabState();
 }
-  String get baseUrl => getEnv('API_BASE_URL');
 
- 
+String get baseUrl => getEnv('API_BASE_URL');
 
 class _SettingsTabState extends NyState<SettingsTab> {
   bool _hiddenProfile = false;
   String _username = "Alim Salim";
   String? _phoneNumber = "+971577563263";
-  String? _userAvatar; 
+  String? _userAvatar;
   int _imageKey = 0;
-  
+
   // Track image upload status
   bool _isUploadingImage = false;
   String? _tempPickedImagePath;
 
   String? _email = "Alim Salim"; // Placeholder for user's full name
   String defaultAvatar = "image6.png";
-  
+
   /// Shows a full-screen image preview when the profile image is tapped
   // Handle the logout process safely
   void _performLogout(BuildContext context) async {
@@ -61,16 +60,17 @@ class _SettingsTabState extends NyState<SettingsTab> {
       routeTo('/sign-in', navigationType: NavigationType.pushAndForgetAll);
     } catch (e) {
       print('Error during logout: $e');
-      
+
       // Make sure auth is cleared even if there's an error
       await Auth.logout();
-      
+
       // Try the most direct way to get back to sign-in
       routeTo('/sign-in', navigationType: NavigationType.pushAndForgetAll);
     }
   }
 
-  void _showFullScreenImage(BuildContext context, {required String imageUrl, required bool isAsset}) {
+  void _showFullScreenImage(BuildContext context,
+      {required String imageUrl, required bool isAsset}) {
     Navigator.of(context).push(
       PageRouteBuilder(
         opaque: false,
@@ -90,26 +90,32 @@ class _SettingsTabState extends NyState<SettingsTab> {
                         maxScale: 4.0,
                         child: Hero(
                           tag: 'profile-image',
-                          child: isAsset 
-                            ? Image.asset(
-                                imageUrl,
-                                fit: BoxFit.contain,
-                              ).localAsset()
-                            : Image.network(
-                                imageUrl,
-                                fit: BoxFit.contain,
-                                loadingBuilder: (context, child, loadingProgress) {
-                                  if (loadingProgress == null) return child;
-                                  return Center(
-                                    child: CircularProgressIndicator(
-                                      value: loadingProgress.expectedTotalBytes != null
-                                          ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
-                                          : null,
-                                      color: Colors.white,
-                                    ),
-                                  );
-                                },
-                              ),
+                          child: isAsset
+                              ? Image.asset(
+                                  imageUrl,
+                                  fit: BoxFit.contain,
+                                ).localAsset()
+                              : Image.network(
+                                  imageUrl,
+                                  fit: BoxFit.contain,
+                                  loadingBuilder:
+                                      (context, child, loadingProgress) {
+                                    if (loadingProgress == null) return child;
+                                    return Center(
+                                      child: CircularProgressIndicator(
+                                        value: loadingProgress
+                                                    .expectedTotalBytes !=
+                                                null
+                                            ? loadingProgress
+                                                    .cumulativeBytesLoaded /
+                                                loadingProgress
+                                                    .expectedTotalBytes!
+                                            : null,
+                                        color: Colors.white,
+                                      ),
+                                    );
+                                  },
+                                ),
                         ),
                       ),
                     ),
@@ -149,7 +155,6 @@ class _SettingsTabState extends NyState<SettingsTab> {
         final userData = await Auth.data();
         print("User data: $userData");
         if (userData != null) {
-          
           setState(() {
             _username = userData['username'];
             _phoneNumber = userData['phone'];
@@ -160,22 +165,22 @@ class _SettingsTabState extends NyState<SettingsTab> {
         }
       };
 
-
-   void _pickMedia() async {
+  void _pickMedia() async {
     final ImagePicker picker = ImagePicker();
-    final XFile? pickedFile = await picker.pickImage(source: ImageSource.gallery);
-    
+    final XFile? pickedFile =
+        await picker.pickImage(source: ImageSource.gallery);
+
     if (pickedFile != null) {
       // Set the temporary image path and show loading state
       setState(() {
         _tempPickedImagePath = pickedFile.path;
         _isUploadingImage = true;
       });
-      
+
       try {
         // Upload the image
         final resp = await ChatApiService().uploadAvatarImage(pickedFile.path);
-        
+
         if (resp != null && resp.url != null) {
           // Update with the server image
           _imageKey++;
@@ -190,12 +195,11 @@ class _SettingsTabState extends NyState<SettingsTab> {
             _isUploadingImage = false;
             _tempPickedImagePath = null;
           });
-          
+
           // Show an error message
           showToast(
-            title: "Error",
-            description: "Failed to upload image. Please try again."
-          );
+              title: "Error",
+              description: "Failed to upload image. Please try again.");
         }
       } catch (e) {
         // Handle exceptions
@@ -203,12 +207,11 @@ class _SettingsTabState extends NyState<SettingsTab> {
           _isUploadingImage = false;
           _tempPickedImagePath = null;
         });
-        
+
         // Show an error message
         showToast(
-          title: "Error",
-          description: "Failed to upload image: ${e.toString()}"
-        );
+            title: "Error",
+            description: "Failed to upload image: ${e.toString()}");
       }
     }
   }
@@ -227,26 +230,29 @@ class _SettingsTabState extends NyState<SettingsTab> {
                 child: Column(
                   children: [
                     // Profile Image with hover and pick media
-                    
+
                     GestureDetector(
                       onTap: () {
                         HapticFeedback.lightImpact(); // Add haptic feedback
-                        
+
                         if (_tempPickedImagePath != null) {
                           // Show the temporary image in full screen
                           Navigator.of(context).push(
                             PageRouteBuilder(
                               opaque: false,
-                              pageBuilder: (context, animation, secondaryAnimation) {
+                              pageBuilder:
+                                  (context, animation, secondaryAnimation) {
                                 return Scaffold(
-                                  backgroundColor: Colors.black.withOpacity(0.9),
+                                  backgroundColor:
+                                      Colors.black.withOpacity(0.9),
                                   body: SafeArea(
                                     child: Stack(
                                       fit: StackFit.expand,
                                       children: [
                                         Center(
                                           child: GestureDetector(
-                                            onTap: () => Navigator.of(context).pop(),
+                                            onTap: () =>
+                                                Navigator.of(context).pop(),
                                             child: InteractiveViewer(
                                               minScale: 0.5,
                                               maxScale: 4.0,
@@ -265,12 +271,15 @@ class _SettingsTabState extends NyState<SettingsTab> {
                                           right: 16,
                                           child: Container(
                                             decoration: BoxDecoration(
-                                              color: Colors.black.withOpacity(0.5),
+                                              color:
+                                                  Colors.black.withOpacity(0.5),
                                               shape: BoxShape.circle,
                                             ),
                                             child: IconButton(
-                                              icon: const Icon(Icons.close, color: Colors.white),
-                                              onPressed: () => Navigator.of(context).pop(),
+                                              icon: const Icon(Icons.close,
+                                                  color: Colors.white),
+                                              onPressed: () =>
+                                                  Navigator.of(context).pop(),
                                             ),
                                           ),
                                         ),
@@ -279,11 +288,14 @@ class _SettingsTabState extends NyState<SettingsTab> {
                                             child: Column(
                                               mainAxisSize: MainAxisSize.min,
                                               children: [
-                                                CircularProgressIndicator(color: Colors.white),
+                                                CircularProgressIndicator(
+                                                    color: Colors.white),
                                                 SizedBox(height: 16),
                                                 Text(
                                                   'Uploading...',
-                                                  style: TextStyle(color: Colors.white, fontSize: 16),
+                                                  style: TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 16),
                                                 ),
                                               ],
                                             ),
@@ -293,15 +305,19 @@ class _SettingsTabState extends NyState<SettingsTab> {
                                   ),
                                 );
                               },
-                              transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                                return FadeTransition(opacity: animation, child: child);
+                              transitionsBuilder: (context, animation,
+                                  secondaryAnimation, child) {
+                                return FadeTransition(
+                                    opacity: animation, child: child);
                               },
                             ),
                           );
-                        } else if (_userAvatar != null && _userAvatar != defaultAvatar) {
+                        } else if (_userAvatar != null &&
+                            _userAvatar != defaultAvatar) {
                           _showFullScreenImage(
                             context,
-                            imageUrl: '${baseUrl}$_userAvatar?refresh=$_imageKey',
+                            imageUrl:
+                                '${baseUrl}$_userAvatar?refresh=$_imageKey',
                             isAsset: false,
                           );
                         } else {
@@ -336,7 +352,8 @@ class _SettingsTabState extends NyState<SettingsTab> {
                                         height: 80,
                                       ),
                                     )
-                                  else if (_userAvatar != null && _userAvatar != defaultAvatar)
+                                  else if (_userAvatar != null &&
+                                      _userAvatar != defaultAvatar)
                                     Hero(
                                       tag: 'profile-image',
                                       child: Image.network(
@@ -357,7 +374,7 @@ class _SettingsTabState extends NyState<SettingsTab> {
                                         height: 80,
                                       ).localAsset(),
                                     ),
-                                  
+
                                   // Show loading indicator when uploading
                                   if (_isUploadingImage)
                                     Container(
@@ -374,14 +391,12 @@ class _SettingsTabState extends NyState<SettingsTab> {
                                 ],
                               ),
                             ),
-                            ),
-                          
+                          ),
                           Positioned(
                             bottom: 0,
                             right: 0,
                             child: GestureDetector(
                               onTap: _pickMedia,
-
                               child: Container(
                                 decoration: BoxDecoration(
                                   color: Color(0xFF57A1FF),
@@ -403,12 +418,10 @@ class _SettingsTabState extends NyState<SettingsTab> {
                               ),
                             ),
                           )
-
                         ],
                       ),
                     ),
-                   
-                                
+
                     const SizedBox(height: 16),
 
                     // User Name
@@ -553,7 +566,7 @@ class _SettingsTabState extends NyState<SettingsTab> {
                   showDivider: false,
                 ),
                 _buildSettingsItem(
-                  imagePath: "share_icon.png", 
+                  imagePath: "share_icon.png",
                   title: 'Log Out',
                   textColor: Colors.red,
                   onTap: () {
@@ -592,7 +605,7 @@ class _SettingsTabState extends NyState<SettingsTab> {
                               onPressed: () {
                                 // Close the dialog first
                                 Navigator.of(context).pop();
-                                
+
                                 // Use a simpler logout approach
                                 _performLogout(context);
                               },
@@ -732,7 +745,7 @@ class _SettingsTabState extends NyState<SettingsTab> {
                     _hiddenProfile = value;
                   });
                 },
-                activeThumbColor: const Color(0xFF3498DB),
+                activeTrackColor: const Color(0xFF3498DB),
                 inactiveThumbColor: Colors.grey.shade400,
                 inactiveTrackColor: Colors.grey.shade700,
               ),

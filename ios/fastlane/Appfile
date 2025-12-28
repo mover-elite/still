@@ -1,0 +1,8 @@
+app_identifier("com.stillustest.app") # The bundle identifier of your app
+apple_id("dev@takentrade.com") # Your Apple Developer Portal username
+
+itc_team_id("127984554") # App Store Connect Team ID
+team_id("9SCXL73ZN5") # Developer Portal Team ID
+
+# For more information about the Appfile, see:
+#     https://docs.fastlane.tools/advanced/#appfile
