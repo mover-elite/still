@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter_app/app/networking/chat_api_service.dart';
 import 'package:flutter_app/app/services/chat_service.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_app/app/networking/websocket_service.dart';

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
 import 'package:flutter_app/app/services/call_handling_service.dart';
 import 'package:nylo_framework/nylo_framework.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;

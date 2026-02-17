@@ -34,7 +34,7 @@ class LiveKitService {
   // Track enable preferences (set before connecting, used after RoomConnectedEvent)
   bool _enableAudio = true;
   bool _enableVideo = true;
-  
+  bool _speakerEnabled = false;
   // Current call metadata (persists beyond UI lifecycle)
   
   String? _currentCallId;
@@ -91,7 +91,7 @@ class LiveKitService {
   Map<String, dynamic>? get currentCallData => _currentCallData != null ? Map.from(_currentCallData!) : null;
   bool get hasActiveCall => _chatId != null && isConnected;
   int? _chatId;
-
+  bool get speakerEnabled => _speakerEnabled;
 
   StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
   CameraPosition _currentCameraPosition = CameraPosition.front;
@@ -194,9 +194,20 @@ class LiveKitService {
       _room = Room(roomOptions: RoomOptions(
         adaptiveStream: true,
         dynacast: true,
+      
       ));
 
-
+      // AudioDevice? device;
+      if(!enableVideo){
+        _speakerEnabled = false;
+        _room?.setSpeakerOn(_speakerEnabled);
+      }else{
+        _speakerEnabled = true;
+        _room?.setSpeakerOn(_speakerEnabled);
+      }
+      
+      
+      
       if (enableAudio) {
         await _room!.localParticipant?.setMicrophoneEnabled(true);
         print('🎤 Microphone enabled before connection');
@@ -236,20 +247,7 @@ class LiveKitService {
       _currentCallData = callData;
       _currentCallId = callId;
       
-      // Set status to ringing after connection (unless already connected via call:start notification)
-      // Status should be 'connecting' at this point
-      // print("📞 Call status before post-connection check: $_callStatus");
-      // if (_callStatus == CallStatus.connecting) {
-      //   print('📞 [STATUS CHANGE] Setting status to RINGING (post-connection)');
-      //   _updateCallStatus(CallStatus.ringing);
-      //   print("📞 Status set to ringing - ringtone should play");
-      // } else if (_callStatus == CallStatus.connected) {
-      //   print("📞 Status already connected (call:start notification received early)");
-      // }
-
-      
-      print("Video enabled on connect: $enableVideo");
-      // Store track preferences for use in room listeners
+  
       _enableAudio = enableAudio;
       _enableVideo = enableVideo;
 
@@ -266,6 +264,7 @@ class LiveKitService {
       _isConnecting = false;
     }
   }
+  
 
   /// Disconnect from the current room
   /// 
@@ -479,6 +478,7 @@ class LiveKitService {
         print('✅ Room reconnected');
         _connectionEventController.add(ConnectionStateEvent(ConnectionStateType.reconnected));
       });
+      
   }
 
   /// Toggle microphone on/off
@@ -558,12 +558,16 @@ class LiveKitService {
   }
 
   /// Enable speaker output
-  Future<void> setSpeakerEnabled(bool enabled) async {
+  Future<bool> toggleSpeaker() async {
     try {
-      await Hardware.instance.setSpeakerphoneOn(enabled);
-      print('🔊 Speaker ${enabled ? "enabled" : "disabled"}');
+      _room?.setSpeakerOn(!_speakerEnabled);
+      _speakerEnabled = !_speakerEnabled;
+      // await Hardware.instance.setSpeakerphoneOn(enabled);
+      print('🔊 Speaker ${_speakerEnabled ? "enabled" : "disabled"}');
+      return _speakerEnabled;
     } catch (e) {
       print('❌ Error setting speaker: $e');
+      return _speakerEnabled;
     }
   }
 

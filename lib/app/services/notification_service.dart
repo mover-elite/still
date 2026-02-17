@@ -189,6 +189,7 @@ class NotificationService with WidgetsBindingObserver {
     required String title,
     required String body,
   }) async {
+    print("Showing chat message notificaton of : $title"); 
     const android = AndroidNotificationDetails(
       'messages',
       'Messages',
@@ -223,45 +224,8 @@ class NotificationService with WidgetsBindingObserver {
     required String callType, // 'audio' or 'video'
     required String callId,
   }) async {
-    final android = AndroidNotificationDetails(
-      'calls',
-      'Calls',
-      channelDescription: 'Incoming call notifications',
-      importance: Importance.max,
-      priority: Priority.max,
-      enableVibration: true,
-      playSound: true,
-      category: AndroidNotificationCategory.call,
-      fullScreenIntent: true,
-      ongoing: true,
-      autoCancel: false,
-      actions: <AndroidNotificationAction>[
-        AndroidNotificationAction(
-          'decline_$chatId',
-          'Decline',
-          showsUserInterface: false,
-          cancelNotification: true,
-        ),
-        AndroidNotificationAction(
-          'accept_$chatId',
-          'Accept',
-          showsUserInterface: true,
-          cancelNotification: true,
-        ),
-      ],
-    );
-
-    const ios = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-      interruptionLevel: InterruptionLevel.critical,
-      categoryIdentifier: 'call_category',
-    );
-
-    final notificationId = chatId; // Use chatId as notification ID for easy tracking
-    // FlutterCallkitIncoming
-    print("Showing notifications");
+ 
+ 
     
   
     try{

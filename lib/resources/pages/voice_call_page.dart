@@ -128,7 +128,7 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
           _pulseController.repeat(reverse: true);
           _fadeController.repeat(reverse: true);
         }
-
+        _isSpeaker = LiveKitService().speakerEnabled;
         // Setup LiveKitService event listeners
         _setupLiveKitListeners();
 
@@ -1333,7 +1333,10 @@ class _VoiceCallPageState extends NyPage<VoiceCallPage>
             isActive: _isSpeaker,
             onTap: () {
               setState(() {
-                _isSpeaker = !_isSpeaker;
+                  LiveKitService().toggleSpeaker().then(  (_speakA) {
+                    _isSpeaker = _speakA;
+                  });
+                
               });
               HapticFeedback.lightImpact();
             },

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/app/networking/chat_api_service.dart';
-import 'package:flutter_app/app/services/call_handling_service.dart';
 import 'package:flutter_app/app/services/livekit_service.dart';
 import 'package:flutter_app/app/services/call_overlay_service.dart';
 import 'package:flutter_app/app/models/livekit_events.dart';
